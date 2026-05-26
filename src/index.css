@@ -1,0 +1,484 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --animate-spin-slow: spin 3s linear infinite;
+  --animate-wiggle: wiggle 1s ease-in-out infinite;
+
+  @keyframes wiggle {
+    0%, 100% { transform: rotate(-10deg); }
+    50% { transform: rotate(10deg); }
+  }
+}
+
+.grid-table {
+  @apply border-collapse border border-gray-200;
+}
+.grid-table th, .grid-table td {
+  @apply border border-gray-200;
+}
+
+body {
+  @apply font-sans text-gray-900 antialiased;
+}
+
+@media print {
+  /* Hide all elements by default when printing */
+  body * {
+    visibility: hidden;
+  }
+  /* Show only the receipt container and its children */
+  .receipt-print-container,
+  .receipt-print-container * {
+    visibility: visible;
+  }
+  /* Style the receipt container specifically for the print job */
+  .receipt-print-container {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: white !important;
+    color: black !important;
+  }
+}
+
+/* ==================== THEME OVERRIDES ==================== */
+
+/* MIDNIGHT DARK THEME (Sleek Space Cosmic) */
+.theme-midnight {
+  --app-bg: #030712;
+  --panel-bg: #090d16;
+  --card-bg: #111827;
+  --card-border: #1f293d;
+  --text-primary: #f9fafb;
+  --text-muted: #9ca3af;
+  --text-accent: #6366f1;
+}
+
+.theme-midnight,
+.theme-midnight main {
+  background-color: #090d16 !important;
+  color: #f3f4f6 !important;
+}
+
+.theme-midnight nav,
+.theme-midnight .bg-white,
+.theme-midnight .bg-white\/80 {
+  background-color: #111827 !important;
+  color: #e5e7eb !important;
+  border-color: #1f293d !important;
+}
+
+.theme-midnight .bg-gray-100/80 {
+  background-color: #1a2336 !important;
+}
+
+.theme-midnight .bg-gray-100 {
+  background-color: #1e293b !important;
+  color: #f3f4f6 !important;
+}
+
+.theme-midnight .bg-gray-50,
+.theme-midnight .bg-gray-50\/50,
+.theme-midnight .bg-slate-50,
+.theme-midnight .bg-gray-50\/30,
+.theme-midnight .bg-gray-50\/40,
+.theme-midnight .bg-gray-50\/60,
+.theme-midnight .bg-gray-50\/80,
+.theme-midnight .bg-gray-50\/85 {
+  background-color: #0e1422 !important;
+  color: #f3f4f6 !important;
+}
+
+/* Base text elements and strong dark text replacements (950-700) */
+.theme-midnight .text-gray-955,
+.theme-midnight .text-gray-950,
+.theme-midnight .text-gray-900,
+.theme-midnight .text-gray-850,
+.theme-midnight .text-gray-800,
+.theme-midnight .text-gray-750,
+.theme-midnight .text-gray-700,
+.theme-midnight .text-slate-900,
+.theme-midnight .text-slate-800,
+.theme-midnight .text-slate-700,
+.theme-midnight .text-zinc-900,
+.theme-midnight .text-zinc-800,
+.theme-midnight .text-zinc-700,
+.theme-midnight .text-neutral-900,
+.theme-midnight .text-neutral-800,
+.theme-midnight .text-neutral-700,
+.theme-midnight .text-black,
+.theme-midnight h1,
+.theme-midnight h2,
+.theme-midnight h3,
+.theme-midnight h4,
+.theme-midnight h5,
+.theme-midnight h6,
+.theme-midnight .text-blue-900,
+.theme-midnight .text-blue-950,
+.theme-midnight .text-emerald-950,
+.theme-midnight .text-slate-900 {
+  color: #f9fafb !important;
+}
+
+/* Secondary/muted text replacements (650-400) */
+.theme-midnight .text-gray-650,
+.theme-midnight .text-gray-600,
+.theme-midnight .text-gray-550,
+.theme-midnight .text-gray-500,
+.theme-midnight .text-gray-450,
+.theme-midnight .text-gray-455,
+.theme-midnight .text-gray-400,
+.theme-midnight .text-slate-600,
+.theme-midnight .text-slate-500,
+.theme-midnight .text-slate-400,
+.theme-midnight .text-zinc-600,
+.theme-midnight .text-zinc-550,
+.theme-midnight .text-zinc-500,
+.theme-midnight .text-zinc-400 {
+  color: #9cb3c9 !important;
+}
+
+/* Link/button/alert accents custom brightened for high accessibility on dark background */
+.theme-midnight .text-blue-600,
+.theme-midnight .text-blue-700,
+.theme-midnight .text-blue-500 {
+  color: #60a5fa !important;
+}
+
+.theme-midnight .text-emerald-600,
+.theme-midnight .text-emerald-700,
+.theme-midnight .text-emerald-500,
+.theme-midnight .text-green-600,
+.theme-midnight .text-green-700,
+.theme-midnight .text-green-500 {
+  color: #34d399 !important;
+}
+
+.theme-midnight .text-amber-600,
+.theme-midnight .text-amber-700,
+.theme-midnight .text-amber-500,
+.theme-midnight .text-yellow-600,
+.theme-midnight .text-yellow-700,
+.theme-midnight .text-yellow-500,
+.theme-midnight .text-amber-650 {
+  color: #fbbf24 !important;
+}
+
+.theme-midnight .text-red-600,
+.theme-midnight .text-red-700,
+.theme-midnight .text-red-500 {
+  color: #f87171 !important;
+}
+
+.theme-midnight .border-gray-100,
+.theme-midnight .border-gray-200,
+.theme-midnight .border-gray-50,
+.theme-midnight .border-gray-150,
+.theme-midnight .border-dashed,
+.theme-midnight .border-slate-100,
+.theme-midnight .border-blue-100/30,
+.theme-midnight .border-blue-100/50 {
+  border-color: #1f293d !important;
+}
+
+.theme-midnight input,
+.theme-midnight select,
+.theme-midnight textarea {
+  background-color: #161e2e !important;
+  color: #f9fafb !important;
+  border-color: #2a374e !important;
+}
+
+.theme-midnight input:focus,
+.theme-midnight select:focus,
+.theme-midnight textarea:focus {
+  border-color: #3b82f6 !important;
+}
+
+.theme-midnight .hover\:bg-gray-50:hover,
+.theme-midnight .hover\:bg-gray-100:hover,
+.theme-midnight .hover\:bg-blue-50/50:hover,
+.theme-midnight .group\/item:hover,
+.theme-midnight .group\/row:hover,
+.theme-midnight .hover\:bg-blue-50:hover,
+.theme-midnight .hover\:bg-gray-50\/80:hover {
+  background-color: #172033 !important;
+  color: #ffffff !important;
+}
+
+.theme-midnight .shadow-sm,
+.theme-midnight .shadow-md,
+.theme-midnight .shadow-lg,
+.theme-midnight .shadow-xl,
+.theme-midnight .shadow-2xl {
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* Custom High Contrast Table Headers for Cosmic (Midnight) Theme */
+.theme-midnight th {
+  color: #f8fafc !important; /* Ultra high contrast soft white */
+  background-color: #111827 !important; /* Solid dark background */
+  border-color: #1f293d !important;
+}
+
+.theme-midnight th.bg-gray-50,
+.theme-midnight th.bg-gray-50\/95,
+.theme-midnight th.bg-gray-50\/90,
+.theme-midnight th.sticky {
+  background-color: #111827 !important;
+  color: #f8fafc !important;
+}
+
+.theme-midnight th.text-blue-600 {
+  color: #60a5fa !important; /* Energetic bright blue for selected header col */
+  background-color: #1e293b !important;
+}
+
+
+/* ==================== FOREST THEME (Herbal Sage) ==================== */
+.theme-forest {
+  --app-bg: #f2f4ef;
+  --panel-bg: #e6ebdd;
+  --card-bg: #ffffff;
+  --card-border: #d0dac4;
+  --text-primary: #1e291b;
+  --text-muted: #606f5c;
+  --text-accent: #15803d;
+}
+
+.theme-forest,
+.theme-forest main {
+  background-color: #f2f4ef !important;
+  color: #2b3a24 !important;
+}
+
+.theme-forest nav,
+.theme-forest .bg-white,
+.theme-forest .bg-white\/80 {
+  background-color: #ffffff !important;
+  color: #2b3a24 !important;
+  border-color: #d0dac4 !important;
+}
+
+.theme-forest .bg-gray-100/80 {
+  background-color: #ebefe5 !important;
+}
+
+.theme-forest .bg-gray-150 {
+  background-color: #d1dcc6 !important;
+}
+
+.theme-forest .bg-gray-100 {
+  background-color: #e2e8da !important;
+  color: #2b3a24 !important;
+}
+
+.theme-forest .bg-gray-50,
+.theme-forest .bg-gray-50\/30,
+.theme-forest .bg-gray-50\/40,
+.theme-forest .bg-gray-50\/50,
+.theme-forest .bg-gray-50\/60,
+.theme-forest .bg-gray-50\/80,
+.theme-forest .bg-gray-50\/85,
+.theme-forest .bg-slate-50 {
+  background-color: #ebefe5 !important;
+  color: #2b3a24 !important;
+}
+
+.theme-forest .text-gray-900,
+.theme-forest .text-gray-950,
+.theme-forest .text-black,
+.theme-forest h1,
+.theme-forest h2,
+.theme-forest h3,
+.theme-forest h4,
+.theme-forest .text-blue-900,
+.theme-forest .text-blue-950,
+.theme-forest .text-emerald-950,
+.theme-forest .text-slate-900 {
+  color: #1a2a14 !important;
+}
+
+.theme-forest .text-gray-550,
+.theme-forest .text-gray-500,
+.theme-forest .text-gray-400,
+.theme-forest .text-gray-450,
+.theme-forest .text-gray-455 {
+  color: #5c6e55 !important;
+}
+
+.theme-forest .text-blue-600 {
+  color: #047857 !important;
+}
+
+.theme-forest .bg-blue-600,
+.theme-forest .bg-blue-600\/90 {
+  background-color: #047857 !important;
+}
+
+.theme-forest .hover\:bg-blue-700:hover {
+  background-color: #065f46 !important;
+}
+
+.theme-forest .border-blue-100 {
+  border-color: #a7f3d0 !important;
+}
+
+.theme-forest .bg-blue-50 {
+  background-color: #ecfdf5 !important;
+}
+
+.theme-forest .border-gray-100,
+.theme-forest .border-gray-200,
+.theme-forest .border-gray-150,
+.theme-forest .border-gray-50,
+.theme-forest .border-dashed,
+.theme-forest .border-slate-100,
+.theme-forest .border-blue-100/30,
+.theme-forest .border-blue-100/50 {
+  border-color: #d1dcc6 !important;
+}
+
+.theme-forest input,
+.theme-forest select,
+.theme-forest textarea {
+  background-color: #ffffff !important;
+  color: #1a2a14 !important;
+  border-color: #ccd6c0 !important;
+}
+
+.theme-forest .hover\:bg-gray-50:hover,
+.theme-forest .hover\:bg-gray-100:hover,
+.theme-forest .hover\:bg-blue-50/50:hover,
+.theme-forest .group\/item:hover,
+.theme-forest .group\/row:hover,
+.theme-forest .hover\:bg-blue-50:hover,
+.theme-forest .hover\:bg-gray-50\/80:hover {
+  background-color: #e2e8da !important;
+}
+
+
+/* ==================== VINTAGE SEPIA (Luxury Gold Sand) ==================== */
+.theme-sepia {
+  --app-bg: #faf7f2;
+  --panel-bg: #efebe4;
+  --card-bg: #fffefe;
+  --card-border: #e6dfd5;
+  --text-primary: #2d2925;
+  --text-muted: #736b63;
+  --text-accent: #b45309;
+}
+
+.theme-sepia,
+.theme-sepia main {
+  background-color: #faf7f2 !important;
+  color: #38322c !important;
+}
+
+.theme-sepia nav,
+.theme-sepia .bg-white,
+.theme-sepia .bg-white\/80 {
+  background-color: #fffdfa !important;
+  color: #38322c !important;
+  border-color: #e6dfd5 !important;
+}
+
+.theme-sepia .bg-gray-100/80 {
+  background-color: #f2ede4 !important;
+}
+
+.theme-sepia .bg-gray-150 {
+  background-color: #e6dfd5 !important;
+}
+
+.theme-sepia .bg-gray-100 {
+  background-color: #eae1d2 !important;
+  color: #38322c !important;
+}
+
+.theme-sepia .bg-gray-50,
+.theme-sepia .bg-gray-50\/30,
+.theme-sepia .bg-gray-50\/40,
+.theme-sepia .bg-gray-50\/50,
+.theme-sepia .bg-gray-50\/60,
+.theme-sepia .bg-gray-50\/80,
+.theme-sepia .bg-gray-50\/85,
+.theme-sepia .bg-slate-50 {
+  background-color: #f2ede4 !important;
+  color: #38322c !important;
+}
+
+.theme-sepia .text-gray-900,
+.theme-sepia .text-gray-950,
+.theme-sepia .text-black,
+.theme-sepia h1,
+.theme-sepia h2,
+.theme-sepia h3,
+.theme-sepia h4,
+.theme-sepia .text-blue-900,
+.theme-sepia .text-blue-950,
+.theme-sepia .text-emerald-950,
+.theme-sepia .text-slate-900 {
+  color: #2d2620 !important;
+}
+
+.theme-sepia .text-gray-500,
+.theme-sepia .text-gray-400,
+.theme-sepia .text-gray-450,
+.theme-sepia .text-gray-455 {
+  color: #7d7265 !important;
+}
+
+.theme-sepia .text-blue-600 {
+  color: #b45309 !important;
+}
+
+.theme-sepia .bg-blue-600,
+.theme-sepia .bg-blue-600\/90 {
+  background-color: #b45309 !important;
+}
+
+.theme-sepia .hover\:bg-blue-700:hover {
+  background-color: #92400e !important;
+}
+
+.theme-sepia .bg-blue-50 {
+  background-color: #fffbeb !important;
+}
+
+.theme-sepia .border-gray-100,
+.theme-sepia .border-gray-200,
+.theme-sepia .border-gray-150,
+.theme-sepia .border-gray-50,
+.theme-sepia .border-dashed,
+.theme-sepia .border-slate-100,
+.theme-sepia .border-blue-100/30,
+.theme-sepia .border-blue-100/50 {
+  border-color: #e6dfd5 !important;
+}
+
+.theme-sepia input,
+.theme-sepia select,
+.theme-sepia textarea {
+  background-color: #fffdfa !important;
+  color: #2d2620 !important;
+  border-color: #dcd3c5 !important;
+}
+
+.theme-sepia .hover\:bg-gray-50:hover,
+.theme-sepia .hover\:bg-gray-100:hover,
+.theme-sepia .hover\:bg-blue-50/50:hover,
+.theme-sepia .group\/item:hover,
+.theme-sepia .group\/row:hover,
+.theme-sepia .hover\:bg-blue-50:hover,
+.theme-sepia .hover\:bg-gray-50\/80:hover {
+  background-color: #eae1d2 !important;
+}

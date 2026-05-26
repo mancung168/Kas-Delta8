@@ -1,0 +1,102 @@
+{
+  "entities": {
+    "Member": {
+      "title": "Member",
+      "description": "A member (Driver or Helper) with their monthly checklist status.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["driver", "helper"] },
+        "months": { "type": "object" },
+        "paymentDetails": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "type", "months", "createdAt", "updatedAt"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Log of financial or activity transactions.",
+      "type": "object",
+      "properties": {
+        "description": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdByAdmin": { "type": "string" },
+        "category": { "type": "string", "enum": ["pemasukan", "pengeluaran", "iuran", "saldo_awal", "lainnya"] },
+        "sourceRecipient": { "type": "string" },
+        "method": { "type": "string" },
+        "adminName": { "type": "string" },
+        "bank": { "type": "string" }
+      },
+      "required": ["description", "amount", "date", "createdAt"]
+    },
+    "Activity": {
+      "title": "Activity",
+      "description": "Log of system or administrative activities.",
+      "type": "object",
+      "properties": {
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "adminName": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["action", "details", "adminName", "timestamp"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "Client settings and configurations like QRIS code",
+      "type": "object",
+      "properties": {
+        "imageB64": { "type": "string" }
+      },
+      "required": ["imageB64"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "Authorized administrators",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "super-admin"] }
+      },
+      "required": ["email", "name", "role"]
+    }
+  },
+  "firestore": {
+    "/members/{memberId}": {
+      "schema": "Member",
+      "description": "Collection of drivers and helpers"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Collection of transaction records"
+    },
+    "/activities/{activityId}": {
+      "schema": "Activity",
+      "description": "Collection of system activity logs"
+    },
+    "/settings/{settingId}": {
+      "schema": "Setting",
+      "description": "App settings configurations"
+    },
+    "/admins/{adminId}": {
+      "schema": "Admin",
+      "description": "Authorized administrators collection"
+    }
+  },
+  "seedData": {
+    "/admins/mancung_168": {
+      "email": "mancung168@gmail.com",
+      "name": "Mancung_168",
+      "role": "super-admin"
+    },
+    "/admins/gptspay_admin": {
+      "email": "gptspay@gmail.com",
+      "name": "GPTSPay_Admin",
+      "role": "super-admin"
+    }
+  }
+}

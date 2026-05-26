@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Daftar Anggota \u0026 Ceklis Bulanan",
+  "description": "Aplikasi manajemen anggota dengan fitur ceklis bulanan (Januari - Desember) untuk melacak kehadiran atau pembayaran.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

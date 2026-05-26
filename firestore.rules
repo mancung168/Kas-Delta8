@@ -1,0 +1,115 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email != null && (
+        request.auth.token.email.lower() == 'mancung168@gmail.com' ||
+        request.auth.token.email.lower() == 'gptspay@gmail.com' ||
+        request.auth.token.email.lower() == 'ncung.vu@gmail.com' ||
+        request.auth.token.email.lower() == 'mancung168.avk@gmail.com' ||
+        exists(/databases/$(database)/documents/admins_by_email/$(request.auth.token.email.lower()))
+      );
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && request.auth.token.email != null && (
+        request.auth.token.email.lower() == 'mancung168@gmail.com' ||
+        request.auth.token.email.lower() == 'gptspay@gmail.com' ||
+        (
+          exists(/databases/$(database)/documents/admins_by_email/$(request.auth.token.email.lower())) &&
+          get(/databases/$(database)/documents/admins_by_email/$(request.auth.token.email.lower())).data.role == 'super-admin'
+        )
+      );
+    }
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Member validation
+    function isValidMember(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.type in ['driver', 'helper'] &&
+             data.months is map && data.months.keys().size() <= 12 &&
+             data.createdAt == request.time &&
+             data.updatedAt == request.time;
+    }
+
+    // Transaction validation
+    function isValidTransaction(data) {
+      return data.description is string && data.description.size() > 0 &&
+             (data.amount is int || data.amount is float) &&
+             data.date is timestamp;
+    }
+
+    // Activity validation
+    function isValidActivity(data) {
+      return data.action is string && data.action.size() > 0 && data.action.size() <= 100 &&
+             data.details is string && data.details.size() > 0 && data.details.size() <= 2000 &&
+             data.adminName is string && data.adminName.size() > 0 && data.adminName.size() <= 100 &&
+             data.timestamp == request.time;
+    }
+
+    // Settings validation
+    function isValidSetting(settingId, data) {
+      return settingId == 'qris' 
+        ? (data.imageB64 is string && data.imageB64.size() <= 2000000)
+        : (settingId == 'payment_methods' || settingId == 'google_sheets' || settingId == 'whatsapp' ? true : false);
+    }
+
+    // Admin validation
+    function isValidAdmin(data) {
+      return data.email is string && data.name is string && data.role in ['admin', 'super-admin'];
+    }
+
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    match /admins_by_email/{email} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    match /members/{memberId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /activities/{activityId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(activityId) && isValidActivity(incoming());
+      allow update, delete: if false;
+    }
+
+    match /settings/{settingId} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidId(settingId) && isValidSetting(settingId, incoming());
+      allow delete: if false;
+    }
+  }
+}
