@@ -10,33 +10,12 @@ const firestoreDatabaseId = (firebaseConfig as any).firestoreDatabaseId;
 // Initialize Firestore safely using initializeFirestore with experimentalForceLongPolling to avoid connection drops in sandbox iframes
 const firestoreSettings = {
   experimentalForceLongPolling: true,
+  useFetchStreams: false,
 };
 
-// Always initialize the default database
-const defaultDbInstance = initializeFirestore(app, firestoreSettings);
-
-// Safely initialize the custom database if one is defined in config
-const customDbInstance = firestoreDatabaseId && firestoreDatabaseId !== '(default)'
+export const db = firestoreDatabaseId && firestoreDatabaseId !== '(default)'
   ? initializeFirestore(app, firestoreSettings, firestoreDatabaseId)
-  : null;
-
-// Determine active database based on localStorage override, defaulting to firestoreDatabaseId to connect to the custom instance
-const getActiveDbId = () => {
-  if (typeof localStorage !== 'undefined') {
-    const saved = localStorage.getItem('FIRESTORE_DATABASE_ID_OVERRIDE');
-    if (saved) return saved;
-  }
-  return firestoreDatabaseId || '(default)';
-};
-
-export const activeDatabaseId = getActiveDbId();
-export const configuredDatabaseId = firestoreDatabaseId || '(default)';
-
-export const db = activeDatabaseId === '(default)' || !customDbInstance
-  ? defaultDbInstance
-  : customDbInstance;
-
-export { defaultDbInstance as defaultDb, customDbInstance as customDb };
+  : initializeFirestore(app, firestoreSettings);
 
 export const auth = getAuth();
 
@@ -62,7 +41,6 @@ export interface FirestoreErrorInfo {
   error: string;
   operationType: OperationType;
   path: string | null;
-  code?: string | null;
   authInfo: {
     userId?: string | null;
     email?: string | null;
@@ -76,18 +54,9 @@ export interface FirestoreErrorInfo {
   };
 }
 
-export function isFirestorePermissionDenied(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const maybeError = error as { code?: string; message?: string };
-  return maybeError.code === 'permission-denied' ||
-    maybeError.message?.includes('Missing or insufficient permissions') === true ||
-    maybeError.message?.includes('permission-denied') === true;
-}
-
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): void {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
-    code: typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code ?? '') : null,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,

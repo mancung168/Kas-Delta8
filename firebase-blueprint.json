@@ -92,11 +92,6 @@
       "email": "mancung168@gmail.com",
       "name": "Mancung_168",
       "role": "super-admin"
-    },
-    "/admins/gptspay_admin": {
-      "email": "gptspay@gmail.com",
-      "name": "GPTSPay_Admin",
-      "role": "super-admin"
     }
   }
 }

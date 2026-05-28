@@ -297,10 +297,10 @@ export async function createAndPopulateSpreadsheet(
     ...transactions.map((tx, idx) => [
       idx + 1,
       formatReportDate(tx.date),
-      tx.category === 'pemasukan' ? 'Pemasukan' : tx.category === 'saldo_awal' ? 'Saldo Awal' : 'Pengeluaran',
+      tx.category === 'pemasukan' ? 'Pemasukan' : 'Pengeluaran',
       tx.sourceRecipient || '-',
       tx.description || '-',
-      (tx.category === 'pemasukan' || tx.category === 'saldo_awal') ? tx.amount : -tx.amount,
+      tx.category === 'pemasukan' ? tx.amount : -tx.amount,
       tx.createdByAdmin || '-'
     ])
   ];

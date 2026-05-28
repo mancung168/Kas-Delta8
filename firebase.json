@@ -1,4 +1,7 @@
 {
+  "firestore": {
+    "rules": "firestore.rules"
+  },
   "hosting": {
     "public": "dist",
     "ignore": [
@@ -10,7 +13,7 @@
       {
         "source": "/api/**",
         "run": {
-          "serviceId": "kas-delta8-backend",
+          "serviceId": "YOUR_CLOUD_RUN_SERVICE_ID",
           "region": "asia-southeast1"
         }
       },

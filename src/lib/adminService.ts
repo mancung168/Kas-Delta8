@@ -6,19 +6,10 @@ import {
   getDocs, 
   setDoc, 
   deleteDoc, 
+  serverTimestamp,
   query,
   where
 } from 'firebase/firestore';
-
-/**
- * Helper to wrap a promise with a timeout to prevent infinite hanging in sandbox/iframe environments.
- */
-function withTimeout<T>(promise: Promise<T>, timeoutMs = 8000, errorMsg = 'Koneksi database Firestore lambat atau terputus. Silakan periksa jaringan dan coba lagi.'): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(errorMsg)), timeoutMs))
-  ]);
-}
 
 export interface AdminItem {
   id: string; // normalized lowercased nickname
@@ -36,13 +27,13 @@ export interface AdminItem {
 export async function isEmailRegistered(email: string | null): Promise<boolean> {
   if (!email) return false;
   const normalizedEmail = email.trim().toLowerCase();
-
+  
   // Hardcoded admins are always registered/allowed
   if (
     normalizedEmail === 'mancung168@gmail.com' ||
     normalizedEmail === 'ncung.vu@gmail.com' ||
     normalizedEmail === 'mancung168.avk@gmail.com' ||
-    normalizedEmail === 'gptspay@gmail.com'
+    normalizedEmail === '4nonymous168@gmail.com'
   ) return true;
 
   try {
@@ -77,7 +68,7 @@ export async function isEmailRegistered(email: string | null): Promise<boolean> 
 export async function getAdminByEmail(email: string | null): Promise<AdminItem | null> {
   if (!email) return null;
   const normalizedEmail = email.trim().toLowerCase();
-
+  
   if (normalizedEmail === 'mancung168@gmail.com') {
     return {
       id: 'mancung_168',
@@ -88,13 +79,13 @@ export async function getAdminByEmail(email: string | null): Promise<AdminItem |
     };
   }
 
-  if (normalizedEmail === 'gptspay@gmail.com') {
+  if (normalizedEmail === '4nonymous168@gmail.com') {
     return {
-      id: 'gptspay_admin',
-      name: 'GPTSPay_Admin',
+      id: '4nonymous_168',
+      name: '4nonymous168',
       pin: '1234',
       role: 'super-admin',
-      email: 'gptspay@gmail.com'
+      email: '4nonymous168@gmail.com'
     };
   }
 
@@ -167,22 +158,19 @@ const normalizeName = (name: string): string => {
  */
 export function isMasterSuperAdmin(name: string): boolean {
   const norm = normalizeName(name);
-  return norm === 'mancung_168' || norm === 'mancung' || norm === 'mancung168';
+  return norm === 'mancung_168' || norm === 'mancung' || norm === 'mancung168' || norm === '4nonymous_168' || norm === '4nonymous168';
 }
-
-let masterSuperAdminSeeded = false;
 
 /**
  * Seeds the default master super-admin if it doesn't exist in Firestore.
  */
 async function ensureMasterSuperAdminExists() {
-  if (masterSuperAdminSeeded) return;
   try {
     const docRef = doc(db, 'admins', 'mancung_168');
-    const docSnap = await withTimeout(getDoc(docRef), 3000, 'Gagal mengambil data Master Super Admin (Timeout).');
+    const docSnap = await getDoc(docRef);
     if (!docSnap.exists() || docSnap.data()?.email !== 'mancung168@gmail.com') {
       const existingData = docSnap.exists() ? docSnap.data() : {};
-      await withTimeout(setDoc(docRef, {
+      await setDoc(docRef, {
         id: 'mancung_168',
         name: 'Mancung_168',
         pin: existingData.pin || '1234',
@@ -190,41 +178,18 @@ async function ensureMasterSuperAdminExists() {
         email: 'mancung168@gmail.com',
         createdAt: existingData.createdAt || new Date(),
         updatedAt: new Date()
-      }), 3000);
+      });
       
-      await withTimeout(setDoc(doc(db, 'admins_by_email', 'mancung168@gmail.com'), {
+      await setDoc(doc(db, 'admins_by_email', 'mancung168@gmail.com'), {
         nickname: 'mancung_168',
         email: 'mancung168@gmail.com',
         role: 'super-admin',
         updatedAt: new Date()
-      }), 3000);
+      });
       console.log('Master Super Admin seeded/updated with email mancung168@gmail.com successfully.');
     }
-
-    const devDocRef = doc(db, 'admins', 'gptspay_admin');
-    const devDocSnap = await withTimeout(getDoc(devDocRef), 3000, 'Gagal mengambil data Developer Super Admin (Timeout).');
-    if (!devDocSnap.exists() || devDocSnap.data()?.email !== 'gptspay@gmail.com') {
-      await withTimeout(setDoc(devDocRef, {
-        id: 'gptspay_admin',
-        name: 'GPTSPay_Admin',
-        pin: '1234',
-        role: 'super-admin',
-        email: 'gptspay@gmail.com',
-        createdAt: new Date(),
-        updatedAt: new Date()
-      }), 3000);
-      
-      await withTimeout(setDoc(doc(db, 'admins_by_email', 'gptspay@gmail.com'), {
-        nickname: 'gptspay_admin',
-        email: 'gptspay@gmail.com',
-        role: 'super-admin',
-        updatedAt: new Date()
-      }), 3000);
-      console.log('Developer Super Admin seeded/updated with email gptspay@gmail.com successfully.');
-    }
-    masterSuperAdminSeeded = true;
   } catch (error) {
-    console.warn('Could not seed Master/Developer Super Admin (probably rule restrictions or timeout):', error);
+    console.warn('Could not seed Master Super Admin (probably rule restrictions):', error);
   }
 }
 
@@ -270,7 +235,7 @@ export async function verifyAdmin(name: string, pin: string): Promise<boolean> {
 export async function isAdminSuper(name: string): Promise<boolean> {
   const norm = normalizeName(name);
   if (!norm) return false;
-  if (norm === 'mancung_168' || norm === 'mancung' || norm === 'mancung168' || norm === 'gptspay' || norm === 'gptspay_admin') return true;
+  if (norm === 'mancung_168' || norm === 'mancung' || norm === 'mancung168') return true;
 
   try {
     const docRef = doc(db, 'admins', norm);
@@ -304,42 +269,20 @@ export async function getAdmins(): Promise<AdminItem[]> {
         id: 'mancung_168',
         name: 'Mancung_168',
         pin: '1234',
-        role: 'super-admin',
-        email: 'mancung168@gmail.com'
-      });
-    }
-
-    // Ensure GPTSPay_Admin represents in the list even if DB fetch returned empty
-    if (!list.some(a => a.id === 'gptspay_admin')) {
-      list.push({
-        id: 'gptspay_admin',
-        name: 'GPTSPay_Admin',
-        pin: '1234',
-        role: 'super-admin',
-        email: 'gptspay@gmail.com'
+        role: 'super-admin'
       });
     }
     
     return list.sort((a, b) => a.name.localeCompare(b.name));
   } catch (error) {
     console.error('Error fetching admins:', error);
-    // Return Mancung_168 and GPTSPay_Admin as static fallback
-    return [
-      {
-        id: 'mancung_168',
-        name: 'Mancung_168',
-        pin: '1234',
-        role: 'super-admin',
-        email: 'mancung168@gmail.com'
-      },
-      {
-        id: 'gptspay_admin',
-        name: 'GPTSPay_Admin',
-        pin: '1234',
-        role: 'super-admin',
-        email: 'gptspay@gmail.com'
-      }
-    ];
+    // Return Mancung_168 as static fallback
+    return [{
+      id: 'mancung_168',
+      name: 'Mancung_168',
+      pin: '1234',
+      role: 'super-admin'
+    }];
   }
 }
 
@@ -357,15 +300,15 @@ export async function saveAdmin(name: string, pin: string, role: 'admin' | 'supe
 
   // Try to remove old email mapping if email is being changed
   try {
-    const docSnap = await withTimeout(getDoc(docRef), 5000);
+    const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
       const oldData = docSnap.data();
       if (oldData && oldData.email && oldData.email !== email) {
         const oldEmailNorm = oldData.email.trim().toLowerCase();
         const oldEmailRaw = oldData.email.trim();
-        await withTimeout(deleteDoc(doc(db, 'admins_by_email', oldEmailNorm)), 5000);
+        await deleteDoc(doc(db, 'admins_by_email', oldEmailNorm));
         if (oldEmailNorm !== oldEmailRaw) {
-          await withTimeout(deleteDoc(doc(db, 'admins_by_email', oldEmailRaw)), 5000);
+          await deleteDoc(doc(db, 'admins_by_email', oldEmailRaw));
         }
       }
     }
@@ -373,7 +316,7 @@ export async function saveAdmin(name: string, pin: string, role: 'admin' | 'supe
     console.warn("Could not handle change email mapping:", err);
   }
 
-  await withTimeout(setDoc(docRef, {
+  await setDoc(docRef, {
     id: norm,
     name: name.trim(),
     email: email ? email.trim() : '',
@@ -381,26 +324,26 @@ export async function saveAdmin(name: string, pin: string, role: 'admin' | 'supe
     role,
     createdAt: new Date(),
     updatedAt: new Date()
-  }), 8000, 'Gagal menyimpan data pengelola utama ke Firestore (Timeout).');
+  });
 
   if (email && email.trim()) {
     const emailNorm = email.trim().toLowerCase();
     const emailRaw = email.trim();
     
-    await withTimeout(setDoc(doc(db, 'admins_by_email', emailNorm), {
+    await setDoc(doc(db, 'admins_by_email', emailNorm), {
       nickname: norm,
       email: emailNorm,
       role,
       updatedAt: new Date()
-    }), 5000, 'Gagal mengaitkan email pengelola ke Firestore (Timeout).');
+    });
 
     if (emailNorm !== emailRaw) {
-      await withTimeout(setDoc(doc(db, 'admins_by_email', emailRaw), {
+      await setDoc(doc(db, 'admins_by_email', emailRaw), {
         nickname: norm,
         email: emailNorm,
         role,
         updatedAt: new Date()
-      }), 5000);
+      });
     }
   }
 }
@@ -416,15 +359,15 @@ export async function deleteAdmin(name: string): Promise<void> {
   const docRef = doc(db, 'admins', norm);
 
   try {
-    const docSnap = await withTimeout(getDoc(docRef), 5000);
+    const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
       const data = docSnap.data();
       if (data && data.email) {
         const emailNorm = data.email.trim().toLowerCase();
         const emailRaw = data.email.trim();
-        await withTimeout(deleteDoc(doc(db, 'admins_by_email', emailNorm)), 5000);
+        await deleteDoc(doc(db, 'admins_by_email', emailNorm));
         if (emailNorm !== emailRaw) {
-          await withTimeout(deleteDoc(doc(db, 'admins_by_email', emailRaw)), 5000);
+          await deleteDoc(doc(db, 'admins_by_email', emailRaw));
         }
       }
     }
@@ -432,5 +375,5 @@ export async function deleteAdmin(name: string): Promise<void> {
     console.warn("Could not delete from admins_by_email:", error);
   }
 
-  await withTimeout(deleteDoc(docRef), 8000, 'Gagal menghapus data pengelola dari Firestore (Timeout).');
+  await deleteDoc(docRef);
 }

@@ -4,7 +4,9 @@ import {
   saveAdmin, 
   deleteAdmin, 
   AdminItem,
-  isMasterSuperAdmin 
+  isMasterSuperAdmin,
+  verifyAdmin,
+  isAdminSuper
 } from '../lib/adminService';
 import { db } from '../lib/firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
@@ -37,14 +39,6 @@ import {
   Settings
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-
-// Helper to wrap promise in timeout to avoid hanging UI in sandboxed environments
-function withTimeoutLocal<T>(promise: Promise<T>, timeoutMs = 8000, errorMsg = 'Penyimpanan database lambat atau terputus.'): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(errorMsg)), timeoutMs))
-  ]);
-}
 
 const DEFAULT_BANKS = [
   { id: 'mandiri', name: 'Mandiri', holder: 'ARIFUDIN', number: '1560027351289', color: 'bg-yellow-600', comingSoon: false },
@@ -122,6 +116,34 @@ export default function AdminManager() {
   const [actionError, setActionError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [confirmState, setConfirmState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
+
+  // Super Admin delete verification state
+  const [deleteVerificationState, setDeleteVerificationState] = useState<{
+    isOpen: boolean;
+    targetAdmin: AdminItem | null;
+  }>({
+    isOpen: false,
+    targetAdmin: null,
+  });
+  const [superAdminNameInput, setSuperAdminNameInput] = useState('');
+  const [superAdminPinInput, setSuperAdminPinInput] = useState('');
+  const [superAdminVerifyError, setSuperAdminVerifyError] = useState('');
+  const [isVerifyingSuperAdmin, setIsVerifyingSuperAdmin] = useState(false);
+
+  const showConfirm = (title: string, message: string, onConfirm: () => void | Promise<void>) => {
+    setConfirmState({
+      isOpen: true,
+      title,
+      message,
+      onConfirm
+    });
+  };
 
   // Load admins
   const loadData = async () => {
@@ -269,16 +291,21 @@ export default function AdminManager() {
     }
   };
 
-  const clearWaAuditLogs = async () => {
-    if (!window.confirm('Apakah Anda yakin ingin menghapus semua log audit WhatsApp? Tindakan ini tidak dapat dibatalkan.')) return;
-    try {
-      const res = await fetch('/api/whatsapp-audit-logs/clear', { method: 'POST' });
-      if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
-      setWaAuditLogs([]);
-    } catch (err: any) {
-      console.error('Error clearing WA audit logs:', err);
-      alert('Gagal membersihkan log audit: ' + err.message);
-    }
+  const clearWaAuditLogs = () => {
+    showConfirm(
+      'Hapus Log Audit WhatsApp',
+      'Apakah Anda yakin ingin menghapus semua log audit WhatsApp? Tindakan ini tidak dapat dibatalkan.',
+      async () => {
+        try {
+          const res = await fetch('/api/whatsapp-audit-logs/clear', { method: 'POST' });
+          if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+          setWaAuditLogs([]);
+        } catch (err: any) {
+          console.error('Error clearing WA audit logs:', err);
+          setWaAuditLogsError('Gagal membersihkan log audit: ' + err.message);
+        }
+      }
+    );
   };
 
   useEffect(() => {
@@ -318,7 +345,7 @@ export default function AdminManager() {
 
     try {
       const waDocRef = doc(db, 'settings', 'whatsapp');
-      await withTimeoutLocal(setDoc(waDocRef, {
+      await setDoc(waDocRef, {
         provider: waProvider,
         token: waToken.trim(),
         baseUrl: waBaseUrl.trim(),
@@ -326,22 +353,18 @@ export default function AdminManager() {
         customHeaders: waCustomHeaders.trim(),
         customBody: waCustomBody.trim(),
         updatedAt: serverTimestamp()
-      }, { merge: true }), 8000, 'Gagal menyimpan pengaturan WhatsApp (Timeout).');
+      }, { merge: true });
 
       setWaSuccess('Pengaturan WhatsApp API berhasil disimpan!');
       
-      // Save log activity (silent catch and timeout protected)
-      try {
-        const logId = 'log_' + Date.now();
-        await withTimeoutLocal(setDoc(doc(db, 'activities', logId), {
-          action: 'system',
-          details: `Mengonfigurasi WhatsApp API Gateway: ${waProvider.toUpperCase()} (${waProvider === 'off' ? 'Dinonaktifkan' : 'Aktif'})`,
-          adminName: localStorage.getItem('ADMIN_NICKNAME') || 'Super Admin',
-          timestamp: serverTimestamp()
-        }), 3000);
-      } catch (logErr) {
-        console.warn('Could not register administrative action log:', logErr);
-      }
+      // Save log activity
+      const logId = 'log_' + Date.now();
+      await setDoc(doc(db, 'activities', logId), {
+        action: 'system',
+        details: `Mengonfigurasi WhatsApp API Gateway: ${waProvider.toUpperCase()} (${waProvider === 'off' ? 'Dinonaktifkan' : 'Aktif'})`,
+        adminName: localStorage.getItem('ADMIN_NICKNAME') || 'Super Admin',
+        timestamp: serverTimestamp()
+      });
 
       setTimeout(() => setWaSuccess(''), 4000);
     } catch (err: any) {
@@ -358,25 +381,21 @@ export default function AdminManager() {
     setSheetsSuccess('');
     try {
       const sheetsDocRef = doc(db, 'settings', 'google_sheets');
-      await withTimeoutLocal(setDoc(sheetsDocRef, {
+      await setDoc(sheetsDocRef, {
         spreadsheetId: tempSpreadsheetId.trim(),
         updatedAt: serverTimestamp()
-      }, { merge: true }), 8000, 'Gagal menyimpan pengaturan Google Sheets (Timeout).');
+      }, { merge: true });
       
       setSheetsSuccess('Pengaturan Google Sheets berhasil disimpan!');
       
-      // Save log activity (silent catch and timeout protected)
-      try {
-        const logId = 'log_' + Date.now();
-        await withTimeoutLocal(setDoc(doc(db, 'activities', logId), {
-          action: 'system',
-          details: `Mengonfigurasi ID Google Spreadsheet pribadi admin: ${tempSpreadsheetId.trim() || 'Dikosongkan (Akan otomatis dibuat baru saat ekspor)'}`,
-          adminName: localStorage.getItem('ADMIN_NICKNAME') || 'Super Admin',
-          timestamp: serverTimestamp()
-        }), 3000);
-      } catch (logErr) {
-        console.warn('Could not register administrative action log:', logErr);
-      }
+      // Save log activity
+      const logId = 'log_' + Date.now();
+      await setDoc(doc(db, 'activities', logId), {
+        action: 'system',
+        details: `Mengonfigurasi ID Google Spreadsheet pribadi admin: ${tempSpreadsheetId.trim() || 'Dikosongkan (Akan otomatis dibuat baru saat ekspor)'}`,
+        adminName: localStorage.getItem('ADMIN_NICKNAME') || 'Super Admin',
+        timestamp: serverTimestamp()
+      });
       
       setTimeout(() => setSheetsSuccess(''), 4000);
     } catch (err: any) {
@@ -391,25 +410,21 @@ export default function AdminManager() {
     setIsSavingPayments(true);
     try {
       const pmDocRef = doc(db, 'settings', 'payment_methods');
-      await withTimeoutLocal(setDoc(pmDocRef, {
+      await setDoc(pmDocRef, {
         banks: updatedBanks,
         ewallets: updatedEwallets,
         updatedAt: serverTimestamp()
-      }), 8000, 'Gagal menyimpan metode pembayaran (Timeout).');
+      });
 
-      // Log activity (silent catch and timeout protected)
-      try {
-        const currentAdmin = localStorage.getItem('ADMIN_NICKNAME') || 'Mancung_168';
-        const logId = `LOG-${Date.now()}`;
-        await withTimeoutLocal(setDoc(doc(db, 'activities', logId), {
-          action: 'ubah_metode_pembayaran',
-          details: `Mengubah daftar metode pembayaran (Bank/E-Wallet) oleh Super Admin ${currentAdmin}`,
-          adminName: currentAdmin,
-          timestamp: serverTimestamp()
-        }), 3000);
-      } catch (logErr) {
-        console.warn('Could not register administrative action log:', logErr);
-      }
+      // Log activity
+      const currentAdmin = localStorage.getItem('ADMIN_NICKNAME') || 'Mancung_168';
+      const logId = `LOG-${Date.now()}`;
+      await setDoc(doc(db, 'activities', logId), {
+        action: 'ubah_metode_pembayaran',
+        details: `Mengubah daftar metode pembayaran (Bank/E-Wallet) oleh Super Admin ${currentAdmin}`,
+        adminName: currentAdmin,
+        timestamp: serverTimestamp()
+      });
 
       setFormSuccess('Metode pembayaran berhasil disimpan!');
       setTimeout(() => setFormSuccess(''), 3000);
@@ -427,25 +442,20 @@ export default function AdminManager() {
     setQrisSuccess('');
     try {
       const qrisDocRef = doc(db, 'settings', 'qris');
-      await withTimeoutLocal(setDoc(qrisDocRef, {
+      await setDoc(qrisDocRef, {
         imageB64: tempQrisFile || qrisImage || '',
         qrisText: tempQrisText.trim(),
         updatedAt: serverTimestamp()
-      }), 8000, 'Gagal menyimpan QRIS (Timeout).');
+      });
 
-      // Log activity (silent catch and timeout protected)
-      try {
-        const currentAdmin = localStorage.getItem('ADMIN_NICKNAME') || 'Mancung_168';
-        const logId = `LOG-${Date.now()}`;
-        await withTimeoutLocal(setDoc(doc(db, 'activities', logId), {
-          action: 'ubah_qris',
-          details: `Mengubah pengaturan QRIS oleh Super Admin ${currentAdmin}`,
-          adminName: currentAdmin,
-          timestamp: serverTimestamp()
-        }), 3000);
-      } catch (logErr) {
-        console.warn('Could not register administrative action log:', logErr);
-      }
+      const currentAdmin = localStorage.getItem('ADMIN_NICKNAME') || 'Mancung_168';
+      const logId = `LOG-${Date.now()}`;
+      await setDoc(doc(db, 'activities', logId), {
+        action: 'ubah_qris',
+        details: `Mengubah pengaturan QRIS oleh Super Admin ${currentAdmin}`,
+        adminName: currentAdmin,
+        timestamp: serverTimestamp()
+      });
 
       setQrisSuccess('Pengaturan QRIS berhasil diperbarui!');
       setTempQrisFile(null);
@@ -518,12 +528,12 @@ export default function AdminManager() {
       try {
         const currentAdmin = localStorage.getItem('ADMIN_NICKNAME') || 'Mancung_168';
         const logId = `LOG-${Date.now()}`;
-        await withTimeoutLocal(setDoc(doc(db, 'activities', logId), {
+        await setDoc(doc(db, 'activities', logId), {
           action: 'create_admin',
           details: `Menambahkan Admin Baru "${generatedName}" dengan role ${role.toUpperCase()} oleh Super Admin ${currentAdmin}`,
           adminName: currentAdmin,
           timestamp: serverTimestamp()
-        }), 3000);
+        });
       } catch (logErr) {
         console.warn('Could not register administrative action log:', logErr);
       }
@@ -534,16 +544,12 @@ export default function AdminManager() {
       setPin('');
       setRole('admin');
       
-      // Reset action loading state immediately so the button stops showing "Proses..."
-      setActionLoading(false);
-
       setTimeout(() => {
         setShowAddForm(false);
         setFormSuccess('');
       }, 5000);
 
-      // Trigger data reload in the background so it does not block UI or prevent actionLoading from being false
-      loadData().catch(err => console.error("Error background loading administrators:", err));
+      await loadData();
     } catch (err: any) {
       setFormError(err.message || 'Gagal menambahkan admin');
     } finally {
@@ -551,7 +557,7 @@ export default function AdminManager() {
     }
   };
 
-  const handleDelete = async (adminItem: AdminItem) => {
+  const handleDelete = (adminItem: AdminItem) => {
     setActionError('');
     if (isMasterSuperAdmin(adminItem.name)) {
       setActionError('Master Super Admin tidak dapat dinonaktifkan atau dihapus demi alasan keamanan sistem jangka panjang!');
@@ -559,30 +565,74 @@ export default function AdminManager() {
       return;
     }
 
-    const conf = window.confirm(`Apakah Anda yakin ingin menghapus akses admin untuk "${adminItem.name.toUpperCase()}"?`);
-    if (!conf) return;
+    const currentAdmin = localStorage.getItem('ADMIN_NICKNAME') || '';
+    setSuperAdminNameInput(currentAdmin);
+    setSuperAdminPinInput('');
+    setSuperAdminVerifyError('');
+    setIsVerifyingSuperAdmin(false);
 
+    setDeleteVerificationState({
+      isOpen: true,
+      targetAdmin: adminItem
+    });
+  };
+
+  const handleVerifyAndDelete = async () => {
+    setSuperAdminVerifyError('');
+    if (!superAdminNameInput.trim()) {
+      setSuperAdminVerifyError('Nama Super Admin harus diisi!');
+      return;
+    }
+    if (!superAdminPinInput) {
+      setSuperAdminVerifyError('PIN Super Admin harus diisi!');
+      return;
+    }
+
+    setIsVerifyingSuperAdmin(true);
     try {
-      await deleteAdmin(adminItem.name);
+      const { targetAdmin } = deleteVerificationState;
+      if (!targetAdmin) return;
 
-      // Log custom activity for this delete (silent catch and timeout protected)
+      // 1. Verify the credentials
+      const isValid = await verifyAdmin(superAdminNameInput.trim(), superAdminPinInput);
+      if (!isValid) {
+        setSuperAdminVerifyError('Nama atau PIN Super Admin salah!');
+        setIsVerifyingSuperAdmin(false);
+        return;
+      }
+
+      // 2. Double check if the verified user is a Super Admin
+      const isSuper = await isAdminSuper(superAdminNameInput.trim());
+      if (!isSuper) {
+        setSuperAdminVerifyError('Akses Ditolak! Hanya Super Admin yang berhak menghapus akun pengelola lain.');
+        setIsVerifyingSuperAdmin(false);
+        return;
+      }
+
+      // 3. Execute delete
+      await deleteAdmin(targetAdmin.name);
+
+      // Log custom activity for this delete
       try {
-        const currentAdmin = localStorage.getItem('ADMIN_NICKNAME') || 'Mancung_168';
         const logId = `LOG-${Date.now()}`;
-        await withTimeoutLocal(setDoc(doc(db, 'activities', logId), {
+        await setDoc(doc(db, 'activities', logId), {
           action: 'delete_admin',
-          details: `Menghapus Admin "${adminItem.name.toUpperCase()}" oleh Super Admin ${currentAdmin}`,
-          adminName: currentAdmin,
+          details: `Menghapus Admin "${targetAdmin.name.toUpperCase()}" oleh Super Admin ${superAdminNameInput.trim().toUpperCase()}`,
+          adminName: superAdminNameInput.trim(),
           timestamp: serverTimestamp()
-        }), 3000);
+        });
       } catch (logErr) {
         console.warn('Could not log delete admin activity:', logErr);
       }
 
       await loadData();
+      setDeleteVerificationState({ isOpen: false, targetAdmin: null });
+      setSuperAdminNameInput('');
+      setSuperAdminPinInput('');
     } catch (err: any) {
-      setActionError(err.message || 'Gagal menghapus akses admin. Periksa kembali koneksi internet Anda.');
-      setTimeout(() => setActionError(''), 5000);
+      setSuperAdminVerifyError(err.message || 'Gagal menghapus akses admin. Periksa kembali koneksi internet Anda.');
+    } finally {
+      setIsVerifyingSuperAdmin(false);
     }
   };
 
@@ -903,11 +953,15 @@ export default function AdminManager() {
                         </button>
                         <button
                           onClick={() => {
-                            if (window.confirm(`Hapus bank ${bank.name}?`)) {
-                              const updated = banks.filter(b => b.id !== bank.id);
-                              setBanks(updated);
-                              savePaymentMethodsToFirestore(updated, ewallets);
-                            }
+                            showConfirm(
+                              'Hapus Bank',
+                              `Apakah Anda yakin ingin menghapus bank ${bank.name}? Akun rekening ini tidak akan dapat diakses oleh anggota lagi.`,
+                              () => {
+                                const updated = banks.filter(b => b.id !== bank.id);
+                                setBanks(updated);
+                                savePaymentMethodsToFirestore(updated, ewallets);
+                              }
+                            );
                           }}
                           className="p-2.5 bg-red-50 text-red-600 hover:bg-red-100 font-bold rounded-xl transition-all active:scale-95"
                           title="Hapus"
@@ -993,11 +1047,15 @@ export default function AdminManager() {
                         </button>
                         <button
                           onClick={() => {
-                            if (window.confirm(`Hapus e-wallet ${ewallet.name}?`)) {
-                              const updated = ewallets.filter(ew => ew.id !== ewallet.id);
-                              setEwallets(updated);
-                              savePaymentMethodsToFirestore(banks, updated);
-                            }
+                            showConfirm(
+                              'Hapus E-Wallet',
+                              `Apakah Anda yakin ingin menghapus e-wallet ${ewallet.name}? Dompet digital ini tidak akan dapat diakses oleh anggota lagi.`,
+                              () => {
+                                const updated = ewallets.filter(ew => ew.id !== ewallet.id);
+                                setEwallets(updated);
+                                savePaymentMethodsToFirestore(banks, updated);
+                              }
+                            );
                           }}
                           className="p-2.5 bg-red-50 text-red-600 hover:bg-red-100 font-bold rounded-xl transition-all active:scale-95"
                           title="Hapus"
@@ -1216,21 +1274,25 @@ export default function AdminManager() {
                     {spreadsheetId && (
                       <button
                         type="button"
-                        onClick={async () => {
-                          if (window.confirm('Apakah Anda yakin ingin menghapus sinkronisasi ke spreadsheet ini? Ekspor berikutnya akan membuat spreadsheet baru.')) {
-                            setTempSpreadsheetId('');
-                            try {
-                              const sheetsDocRef = doc(db, 'settings', 'google_sheets');
-                              await withTimeoutLocal(setDoc(sheetsDocRef, {
-                                spreadsheetId: '',
-                                updatedAt: serverTimestamp()
-                              }, { merge: true }), 8000, 'Gagal menghapus sinkronisasi spreadsheet (Timeout).');
-                              setSheetsSuccess('Sinkronisasi spreadsheet berhasil dihapus.');
-                              setTimeout(() => setSheetsSuccess(''), 4000);
-                            } catch (e: any) {
-                              setSheetsError(e.message || 'Gagal menghapus sinkronisasi.');
+                        onClick={() => {
+                          showConfirm(
+                            'Putuskan Sinkronisasi Spreadsheet',
+                            'Apakah Anda yakin ingin menghapus sinkronisasi ke spreadsheet ini? Ekspor iuran bulanan berikutnya akan membuat spreadsheet baru di Google Drive.',
+                            async () => {
+                              setTempSpreadsheetId('');
+                              try {
+                                const sheetsDocRef = doc(db, 'settings', 'google_sheets');
+                                await setDoc(sheetsDocRef, {
+                                  spreadsheetId: '',
+                                  updatedAt: serverTimestamp()
+                                }, { merge: true });
+                                setSheetsSuccess('Sinkronisasi spreadsheet berhasil dihapus.');
+                                setTimeout(() => setSheetsSuccess(''), 4000);
+                              } catch (e: any) {
+                                setSheetsError(e.message || 'Gagal menghapus sinkronisasi.');
+                              }
                             }
-                          }
+                          );
                         }}
                         className="py-4 px-5 bg-gray-50 hover:bg-gray-150 text-gray-600 font-extrabold rounded-2xl border border-gray-200 transition-all text-xs active:scale-95"
                       >
@@ -2205,6 +2267,145 @@ export default function AdminManager() {
                   >
                     <Check size={12} className="stroke-[2.5]" />
                     Simpan Metode
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {confirmState && confirmState.isOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-950/60 backdrop-blur-sm animate-fade-in">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-[2.5rem] border border-gray-100 p-8 shadow-2xl max-w-sm w-full relative overflow-hidden"
+            >
+              <div className="text-center space-y-5">
+                <div className="w-14 h-14 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto text-xl">
+                  ⚠️
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-sm font-black text-gray-900 tracking-tight uppercase">
+                    {confirmState.title}
+                  </h3>
+                  <p className="text-xs font-semibold text-gray-400 font-sans leading-relaxed">
+                    {confirmState.message}
+                  </p>
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={() => setConfirmState(null)}
+                    className="flex-1 py-3.5 bg-gray-50 hover:bg-gray-100 text-gray-600 font-extrabold rounded-2xl transition-all text-xs border border-gray-150 cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (confirmState.onConfirm) {
+                        try {
+                          await confirmState.onConfirm();
+                        } catch (err) {
+                          console.error("Error executing confirmation operation:", err);
+                        }
+                      }
+                      setConfirmState(null);
+                    }}
+                    className="flex-1 py-3.5 bg-red-600 hover:bg-red-750 text-white font-extrabold rounded-2xl transition-all text-xs shadow-lg shadow-red-100 flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    Ya, Lanjutkan
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {deleteVerificationState.isOpen && deleteVerificationState.targetAdmin && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-950/60 backdrop-blur-sm animate-fade-in">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-[2.5rem] border border-gray-100 p-8 shadow-2xl max-w-md w-full relative overflow-hidden"
+            >
+              <div className="space-y-6">
+                <div className="text-center space-y-2">
+                  <div className="w-14 h-14 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto text-xl mb-2">
+                    ⚠️
+                  </div>
+                  <h3 className="text-base font-black text-gray-900 tracking-tight uppercase">
+                    Verifikasi Super Admin
+                  </h3>
+                  <p className="text-xs font-semibold text-gray-400 font-sans px-4">
+                    Menghapus akses admin pengelola <strong className="text-gray-900">"{deleteVerificationState.targetAdmin.name.toUpperCase()}"</strong> memerlukan otorisasi Super Admin.
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Super Admin Input */}
+                  <div className="space-y-2">
+                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-wider font-mono">
+                      NAMA SUPER ADMIN
+                    </label>
+                    <div className="relative">
+                      <User className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                      <input
+                        type="text"
+                        placeholder="NICKNAME SUPER ADMIN"
+                        value={superAdminNameInput}
+                        onChange={(e) => setSuperAdminNameInput(e.target.value)}
+                        className="w-full pl-11 pr-4 py-3.5 bg-gray-50 border border-gray-100 hover:bg-gray-100/50 rounded-2xl outline-none focus:border-red-500 focus:bg-white transition-all text-xs font-bold text-gray-800 uppercase"
+                      />
+                    </div>
+                  </div>
+
+                  {/* PIN Input */}
+                  <div className="space-y-2">
+                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-wider font-mono">
+                      PIN KEAMANAN
+                    </label>
+                    <div className="relative">
+                      <Key className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                      <input
+                        type="password"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={8}
+                        placeholder="••••••"
+                        value={superAdminPinInput}
+                        onChange={(e) => setSuperAdminPinInput(e.target.value.replace(/\D/g, ''))}
+                        className="w-full pl-11 pr-4 py-3.5 bg-gray-50 border border-gray-150 hover:bg-gray-100/50 rounded-2xl outline-none focus:border-red-500 focus:bg-white transition-all text-xs font-bold text-gray-800 tracking-[0.3em]"
+                      />
+                    </div>
+                  </div>
+
+                  {superAdminVerifyError && (
+                    <div className="p-3 bg-red-50 text-red-600 rounded-2xl border border-red-100 flex items-center gap-2">
+                      <span className="text-xs font-bold leading-snug">{superAdminVerifyError}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    disabled={isVerifyingSuperAdmin}
+                    onClick={() => setDeleteVerificationState({ isOpen: false, targetAdmin: null })}
+                    className="flex-1 py-3.5 bg-gray-50 hover:bg-gray-100 disabled:opacity-50 text-gray-600 font-extrabold rounded-2xl transition-all text-xs border border-gray-150 cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    disabled={isVerifyingSuperAdmin || !superAdminNameInput.trim() || !superAdminPinInput}
+                    onClick={handleVerifyAndDelete}
+                    className="flex-1 py-3.5 bg-red-600 hover:bg-red-750 disabled:opacity-50 text-white font-extrabold rounded-2xl transition-all text-xs shadow-lg shadow-red-150 flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    {isVerifyingSuperAdmin ? (
+                      <Loader2 className="animate-spin" size={14} />
+                    ) : (
+                      'Ya, Hapus Admin'
+                    )}
                   </button>
                 </div>
               </div>

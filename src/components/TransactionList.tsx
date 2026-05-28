@@ -10,14 +10,15 @@ import {
   serverTimestamp, 
   query, 
   orderBy,
-  Timestamp 
+  Timestamp,
+  deleteField
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { Trash2, Plus, ReceiptText, Calendar, DollarSign, Loader2, Search, Filter, X, Lock, ShieldCheck, ChevronDown, Calculator, Wallet, TrendingDown, Users, Pencil, Printer, Download, Share2, QrCode, Phone, Copy } from 'lucide-react';
 import { downloadReceipt, shareReceipt, copyReceiptImageToClipboard, generateReceiptCanvas } from '../lib/downloadReceipt';
 import { downloadMonthlyReport, downloadMonthlyReportPDF } from '../lib/downloadReport';
 import { createAndPopulateSpreadsheet } from '../lib/googleSheetsService';
-import { verifyAdmin, getAdmins, AdminItem } from '../lib/adminService';
+import { verifyAdmin } from '../lib/adminService';
 import { motion, AnimatePresence } from 'motion/react';
 import { generateDynamicQRIS } from '../lib/qris';
 
@@ -125,13 +126,6 @@ const formatPaymentDate = (timestamp: any) => {
   return '-';
 };
 
-const formatNumberWithDots = (val: string | number): string => {
-  if (val === undefined || val === null) return '';
-  const cleanVal = val.toString().replace(/\D/g, '');
-  if (!cleanVal) return '';
-  return Number(cleanVal).toLocaleString('id-ID');
-};
-
 export default function TransactionList({ minimal = false }: { minimal?: boolean }) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null);
@@ -144,8 +138,7 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
   });
   const [amount, setAmount] = useState(() => {
     try {
-      const draft = localStorage.getItem('TX_DRAFT_AMOUNT') || '';
-      return draft ? formatNumberWithDots(draft) : '';
+      return localStorage.getItem('TX_DRAFT_AMOUNT') || '';
     } catch {
       return '';
     }
@@ -195,7 +188,7 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
       console.warn(e);
     }
   }, [sourceRecipient]);
-  const [category, setCategory] = useState<'pemasukan' | 'pengeluaran' | 'saldo_awal'>('pengeluaran');
+  const [category, setCategory] = useState<'pemasukan' | 'pengeluaran'>('pengeluaran');
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -243,12 +236,6 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
 
   // Admin verification states for transaction
   const [isAdminVerified, setIsAdminVerified] = useState(false);
-  const [adminsList, setAdminsList] = useState<AdminItem[]>([]);
-  
-  useEffect(() => {
-    getAdmins().then(setAdminsList).catch(console.error);
-  }, []);
-
   const [adminName, setAdminName] = useState(() => localStorage.getItem('ADMIN_NICKNAME') || '');
   const [adminPin, setAdminPin] = useState('');
   const [adminError, setAdminError] = useState('');
@@ -318,24 +305,9 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
     setIsFormOpen(true);
   };
 
-  const handleOpenSaldoAwalForm = () => {
-    setDesc('Saldo Awal Kas');
-    setAmount('');
-    setSourceRecipient('Kas SNJ Logistik');
-    setDate(new Date().toISOString().split('T')[0]);
-    setAdminName(localStorage.getItem('ADMIN_NICKNAME') || '');
-    setAdminPin('');
-    setAdminError('');
-    setIsAdminVerified(false);
-    setCategory('saldo_awal');
-    setEditingTransactionId(null);
-    setShowTxQRIS(false);
-    setIsFormOpen(true);
-  };
-
   const handleOpenEditForm = (tx: Transaction) => {
     setDesc(tx.description || '');
-    setAmount(tx.amount ? formatNumberWithDots(tx.amount) : '');
+    setAmount(tx.amount?.toString() || '');
     setSourceRecipient(tx.sourceRecipient || '');
     
     let dStr = new Date().toISOString().split('T')[0];
@@ -349,7 +321,7 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
     setAdminPin('');
     setAdminError('');
     setIsAdminVerified(false);
-    setCategory(tx.category === 'pemasukan' ? 'pemasukan' : tx.category === 'saldo_awal' ? 'saldo_awal' : 'pengeluaran');
+    setCategory(tx.category === 'pemasukan' ? 'pemasukan' : 'pengeluaran');
     setEditingTransactionId(tx.id);
     setShowTxQRIS(false);
     setIsFormOpen(true);
@@ -368,7 +340,7 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
   const timerRef = React.useRef<NodeJS.Timeout | null>(null);
   const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = React.useRef<number>(0);
-  const touchStartPosRef = React.useRef<{ x: number; y: number } | null>(null);
+  const touchStartRef = React.useRef<{ x: number; y: number } | null>(null);
 
   const startLongPress = (id: string, e: React.MouseEvent | React.TouchEvent) => {
     if ('button' in e && e.button !== 0) return; // ignore right clicks
@@ -376,20 +348,16 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
     setPressProgress(0);
     startTimeRef.current = Date.now();
 
-    // Store start coords
-    if ('touches' in e && e.touches.length > 0) {
-      touchStartPosRef.current = {
+    if ('touches' in e && e.touches[0]) {
+      touchStartRef.current = {
         x: e.touches[0].clientX,
         y: e.touches[0].clientY,
       };
-    } else if ('clientX' in e) {
-      touchStartPosRef.current = {
-        x: (e as React.MouseEvent).clientX,
-        y: (e as React.MouseEvent).clientY,
-      };
+    } else {
+      touchStartRef.current = null;
     }
 
-    const delay = 850;
+    const delay = 950;
     const intervalTime = 16;
     const totalSteps = delay / intervalTime;
     let currentStep = 0;
@@ -409,48 +377,34 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
     }, delay);
   };
 
-  const moveLongPress = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!isPressingId || !startTimeRef.current || !touchStartPosRef.current) return;
-
-    let currentX = 0;
-    let currentY = 0;
-
-    if ('touches' in e && e.touches.length > 0) {
-      currentX = e.touches[0].clientX;
-      currentY = e.touches[0].clientY;
-    } else if ('clientX' in e) {
-      currentX = (e as React.MouseEvent).clientX;
-      currentY = (e as React.MouseEvent).clientY;
-    } else {
-      return;
-    }
-
-    const diffX = Math.abs(currentX - touchStartPosRef.current.x);
-    const diffY = Math.abs(currentY - touchStartPosRef.current.y);
-
-    // If movement exceeds 8px (normal scroll/drag threshold), cancel the long-press interaction
-    if (diffX > 8 || diffY > 8) {
-      endLongPress(false);
-    }
-  };
-
   const endLongPress = (shouldTriggerClick = true, id?: string) => {
     if (timerRef.current) clearTimeout(timerRef.current);
     if (intervalRef.current) clearInterval(intervalRef.current);
     timerRef.current = null;
     intervalRef.current = null;
-    touchStartPosRef.current = null;
 
     if (isPressingId && shouldTriggerClick && id) {
       const pressDuration = Date.now() - startTimeRef.current;
-      if (pressDuration < 850) {
-        // Since we are matching the member list, clicking/short tapping is not supposed to trigger options.
-        // Option modal should only trigger on full long press completion.
+      if (pressDuration < 950) {
+        const found = transactions.find(idx => idx.id === id);
+        if (found) {
+          setActiveLongPressTx(found);
+        }
       }
     }
 
     setIsPressingId(null);
     setPressProgress(0);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!touchStartRef.current || !e.touches[0]) return;
+    const dx = e.touches[0].clientX - touchStartRef.current.x;
+    const dy = e.touches[0].clientY - touchStartRef.current.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    if (distance > 10) { // cancel if scrolled or dragged
+      endLongPress(false);
+    }
   };
 
   useEffect(() => {
@@ -459,20 +413,6 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, []);
-
-  // Cancel long-press on any general scrolling event in the page (exactly like MemberList)
-  useEffect(() => {
-    if (!isPressingId) return;
-
-    const handleScroll = () => {
-      endLongPress(false);
-    };
-
-    window.addEventListener('scroll', handleScroll, { capture: true, passive: true });
-    return () => {
-      window.removeEventListener('scroll', handleScroll, { capture: true });
-    };
-  }, [isPressingId]);
 
   // States for verified member iuran history
   const [members, setMembers] = useState<any[]>([]);
@@ -586,14 +526,13 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
 
   const totalVerifiedAmount = filteredVerifiedPayments.reduce((sum, p) => sum + p.amount, 0);
 
-  const handleVerifyAdmin = async (e?: React.FormEvent, overridePin?: string) => {
-    if (e) e.preventDefault();
+  const handleVerifyAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!adminName.trim()) {
       setAdminError('Nama admin harus diisi!');
       return;
     }
-    const pinToVerify = overridePin !== undefined ? overridePin : adminPin;
-    const isValidAdmin = await verifyAdmin(adminName, pinToVerify);
+    const isValidAdmin = await verifyAdmin(adminName, adminPin);
     if (!isValidAdmin) {
       setAdminError('Nama admin atau PIN salah!');
       return;
@@ -604,13 +543,12 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
     setAdminError('');
   };
 
-  const handleGlobalAdminVerifyTx = async (overridePin?: string) => {
+  const handleGlobalAdminVerifyTx = async () => {
     if (!adminName.trim()) {
       setAdminError('Nama admin harus diisi');
       return;
     }
-    const pinToVerify = overridePin !== undefined ? overridePin : adminPin;
-    const isValidAdmin = await verifyAdmin(adminName, pinToVerify);
+    const isValidAdmin = await verifyAdmin(adminName, adminPin);
     if (!isValidAdmin) {
       setAdminError('Nama admin atau PIN salah');
       return;
@@ -622,7 +560,7 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
     if (adminTargetAction.type === 'edit_tx') {
       const tx = adminTargetAction.tx;
       setDesc(tx.description || '');
-      setAmount(tx.amount ? formatNumberWithDots(tx.amount) : '');
+      setAmount(tx.amount?.toString() || '');
       setSourceRecipient(tx.sourceRecipient || '');
       
       let dStr = new Date().toISOString().split('T')[0];
@@ -636,7 +574,7 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
       setAdminPin('');
       setAdminError('');
       setIsAdminVerified(true);
-      setCategory(tx.category === 'pemasukan' ? 'pemasukan' : tx.category === 'saldo_awal' ? 'saldo_awal' : 'pengeluaran');
+      setCategory(tx.category === 'pemasukan' ? 'pemasukan' : 'pengeluaran');
       setEditingTransactionId(tx.id);
       setIsFormOpen(true);
 
@@ -651,7 +589,7 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
         
         await setDoc(doc(collection(db, 'activities')), {
           action: 'hapus_transaksi',
-          details: formatLogDetails(`[Hapus Transaksi] ${tx.category === 'pemasukan' ? 'Pemasukan' : tx.category === 'saldo_awal' ? 'Saldo Awal' : 'Pengeluaran'} - ${tx.sourceRecipient || 'Kas'} - ${tx.description} (Rp ${tx.amount?.toLocaleString('id-ID')})`),
+          details: formatLogDetails(`[Hapus Transaksi] ${tx.category === 'pemasukan' ? 'Pemasukan' : 'Pengeluaran'} - ${tx.sourceRecipient || 'Kas'} - ${tx.description} (Rp ${tx.amount?.toLocaleString('id-ID')})`),
           adminName: adminName.trim(),
           timestamp: serverTimestamp()
         });
@@ -669,8 +607,7 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
       try {
         await updateDoc(doc(db, 'members', payment.memberId), {
           [`months.${payment.month}`]: false,
-          [`paymentDetails.${payment.month}.status`]: 'failed',
-          [`paymentDetails.${payment.month}.verifiedAt`]: null,
+          [`paymentDetails.${payment.month}`]: deleteField(),
           updatedAt: serverTimestamp()
         });
 
@@ -694,17 +631,15 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
 
   const addTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanAmount = amount.replace(/\D/g, '');
-    if (!desc.trim() || !cleanAmount || !sourceRecipient.trim() || !isAdminVerified || adding) return;
+    if (!desc.trim() || !amount || !sourceRecipient.trim() || !isAdminVerified || adding) return;
 
     setAdding(true);
     const id = Date.now().toString();
     const path = `transactions/${id}`;
     try {
-      const numericAmount = Number(cleanAmount);
       const txPromise = setDoc(doc(db, 'transactions', id), {
         description: desc.trim(),
-        amount: numericAmount,
+        amount: Number(amount),
         date: Timestamp.fromDate(new Date(date)),
         createdAt: serverTimestamp(),
         createdByAdmin: adminName.trim(),
@@ -715,7 +650,7 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
       // Log transaction creation to activities collection
       const activityPromise = setDoc(doc(collection(db, 'activities')), {
         action: 'tambah_transaksi',
-        details: formatLogDetails(`[Tambah Transaksi] ${category === 'pemasukan' ? 'Pemasukan' : category === 'saldo_awal' ? 'Saldo Awal' : 'Pengeluaran'} - ${sourceRecipient.trim()} - ${desc.trim()} (Rp ${numericAmount.toLocaleString('id-ID')})`),
+        details: formatLogDetails(`[Tambah Transaksi] ${category === 'pemasukan' ? 'Pemasukan' : 'Pengeluaran'} - ${sourceRecipient.trim()} - ${desc.trim()} (Rp ${Number(amount).toLocaleString('id-ID')})`),
         adminName: adminName.trim(),
         timestamp: serverTimestamp()
       });
@@ -731,7 +666,7 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
       const newToast = {
         id: toastId,
         description: desc.trim(),
-        amount: numericAmount,
+        amount: Number(amount),
         category: category
       };
       setToasts(prev => [...prev, newToast]);
@@ -762,19 +697,17 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
 
   const updateTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanAmount = amount.replace(/\D/g, '');
-    if (!editingTransactionId || !desc.trim() || !cleanAmount || !sourceRecipient.trim() || !isAdminVerified || adding) return;
+    if (!editingTransactionId || !desc.trim() || !amount || !sourceRecipient.trim() || !isAdminVerified || adding) return;
 
     setAdding(true);
     const path = `transactions/${editingTransactionId}`;
     try {
       const tx = transactions.find(idx => idx.id === editingTransactionId);
       const originalCreatedAt = tx?.createdAt || serverTimestamp();
-      const numericAmount = Number(cleanAmount);
 
       const txPromise = setDoc(doc(db, 'transactions', editingTransactionId), {
         description: desc.trim(),
-        amount: numericAmount,
+        amount: Number(amount),
         date: Timestamp.fromDate(new Date(date)),
         createdAt: originalCreatedAt,
         createdByAdmin: adminName.trim(),
@@ -785,7 +718,7 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
       // Log transaction update to activities collection
       const activityPromise = setDoc(doc(collection(db, 'activities')), {
         action: 'edit_transaksi',
-        details: formatLogDetails(`[Edit Transaksi] ${category === 'pemasukan' ? 'Pemasukan' : category === 'saldo_awal' ? 'Saldo Awal' : 'Pengeluaran'} - ${tx?.sourceRecipient || 'Kas'} - ${tx?.description || ''} (Rp ${tx?.amount?.toLocaleString('id-ID')}) => ${sourceRecipient.trim()} - ${desc.trim()} (Rp ${numericAmount.toLocaleString('id-ID')})`),
+        details: formatLogDetails(`[Edit Transaksi] ${category === 'pemasukan' ? 'Pemasukan' : 'Pengeluaran'} - ${tx?.sourceRecipient || 'Kas'} - ${tx?.description || ''} (Rp ${tx?.amount?.toLocaleString('id-ID')}) => ${sourceRecipient.trim()} - ${desc.trim()} (Rp ${Number(amount).toLocaleString('id-ID')})`),
         adminName: adminName.trim(),
         timestamp: serverTimestamp()
       });
@@ -801,7 +734,7 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
       const newToast = {
         id: toastId,
         description: desc.trim(),
-        amount: numericAmount,
+        amount: Number(amount),
         category: category,
         isEdit: true
       };
@@ -842,7 +775,7 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
           // Log transaction deletion to activities collection
           await setDoc(doc(collection(db, 'activities')), {
             action: 'hapus_transaksi',
-            details: formatLogDetails(`[Hapus Transaksi] ${t.category === 'pemasukan' ? 'Pemasukan' : t.category === 'saldo_awal' ? 'Saldo Awal' : 'Pengeluaran'} - ${t.sourceRecipient || 'Kas'} - ${t.description} (Rp ${t.amount.toLocaleString('id-ID')})`),
+            details: formatLogDetails(`[Hapus Transaksi] ${t.category === 'pemasukan' ? 'Pemasukan' : 'Pengeluaran'} - ${t.sourceRecipient || 'Kas'} - ${t.description} (Rp ${t.amount.toLocaleString('id-ID')})`),
             adminName: 'Admin',
             timestamp: serverTimestamp()
           });
@@ -1139,29 +1072,17 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
             <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-[0_2px_12px_rgba(0,0,0,0.02)] flex flex-col justify-between space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Saldo Awal</span>
-                <button
-                  onClick={handleOpenSaldoAwalForm}
-                  className="w-8 h-8 rounded-xl bg-gray-50 hover:bg-gray-100 text-gray-500 border border-gray-100 flex items-center justify-center transition-all cursor-pointer active:scale-95"
-                  title="Isi Saldo Awal"
-                >
-                  <Plus size={14} className="stroke-[2.5]" />
-                </button>
-              </div>
-              <div className="flex items-end justify-between gap-1.5">
-                <div>
-                  <span className="text-lg font-black text-gray-950 block leading-tight">
-                    Rp {totalSaldoAwal.toLocaleString('id-ID')}
-                  </span>
-                  <span className="text-[10px] font-semibold text-gray-400 block mt-1 leading-none">
-                    Saldo Awal Kas
-                  </span>
+                <div className="w-8 h-8 rounded-xl bg-gray-50 flex items-center justify-center text-gray-400 border border-gray-100">
+                  <Calculator size={14} className="stroke-[2.5]" />
                 </div>
-                <button
-                  onClick={handleOpenSaldoAwalForm}
-                  className="px-2.5 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100/80 text-blue-600 font-extrabold text-[10px] cursor-pointer transition-all active:scale-95"
-                >
-                  Isi
-                </button>
+              </div>
+              <div>
+                <span className="text-lg font-black text-gray-950 block leading-tight">
+                  Rp {totalSaldoAwal.toLocaleString('id-ID')}
+                </span>
+                <span className="text-[10px] font-semibold text-gray-400 block mt-1">
+                  Saldo Awal Kas
+                </span>
               </div>
             </div>
 
@@ -1296,22 +1217,27 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
                           <label className="text-[10px] uppercase font-bold text-gray-400 tracking-wider block ml-1 flex items-center gap-1 font-mono">
                             Nama Admin
                           </label>
-                          <select
+                          <input
+                            type="text"
                             required
+                            autoFocus
                             value={adminName}
                             onChange={(e) => {
                               setAdminName(e.target.value);
                               setAdminError('');
                             }}
-                            className="w-full px-4 py-3.5 rounded-2xl border border-gray-100 focus:border-amber-500 focus:ring-4 focus:ring-amber-50 outline-none transition-all text-sm font-bold bg-white text-gray-800"
-                          >
-                            <option value="">-- Pilih Pengelola --</option>
-                            {adminsList.map((a) => (
-                              <option key={a.id} value={a.name}>
-                                {a.name} {a.email ? `(${a.email})` : ''}
-                              </option>
-                            ))}
-                          </select>
+                            placeholder="Nama penanggung jawab..."
+                            className="w-full px-4 py-3.5 rounded-2xl border border-gray-100 focus:border-amber-500 focus:ring-4 focus:ring-amber-50 outline-none transition-all text-sm font-bold text-gray-800"
+                          />
+                          {['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) && (
+                            <motion.div 
+                              initial={{ opacity: 0, y: -5 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="text-[10px] font-extrabold text-[#9a3412] bg-amber-50 border border-amber-100 px-3 py-1.5 rounded-xl flex items-center gap-1.5"
+                            >
+                              <span>🌟 Super Admin Terdaftar: Bebas PIN!</span>
+                            </motion.div>
+                          )}
                         </div>
 
                         <div className="space-y-1.5 text-left">
@@ -1320,21 +1246,16 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
                           </label>
                           <input
                             type="password"
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                            required
+                            required={!['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase())}
                             maxLength={4}
-                            value={adminPin}
+                            value={['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) ? '1234' : adminPin}
                             onChange={(e) => {
-                              const val = e.target.value.replace(/\D/g, '');
-                              setAdminPin(val);
+                              setAdminPin(e.target.value);
                               setAdminError('');
-                              if (val.length === 4) {
-                                handleVerifyAdmin(undefined, val);
-                              }
                             }}
-                            placeholder="••••"
-                            className="w-full px-4 py-3.5 rounded-2xl border border-gray-100 focus:border-amber-500 focus:ring-4 focus:ring-amber-50 outline-none transition-all text-center tracking-[0.5em] text-sm font-bold text-gray-800"
+                            disabled={['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase())}
+                            placeholder={['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) ? '✓✓✓✓' : '••••'}
+                            className={`w-full px-4 py-3.5 rounded-2xl border border-gray-100 focus:border-amber-500 focus:ring-4 focus:ring-amber-50 outline-none transition-all text-center tracking-[0.5em] text-sm font-bold text-gray-800 ${['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) ? 'bg-amber-50/20 text-amber-500 border-dashed border-amber-200 cursor-not-allowed' : ''}`}
                           />
                         </div>
 
@@ -1358,7 +1279,7 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
                           </button>
                           <button
                             type="submit"
-                            disabled={!adminName.trim() || adminPin.length < 4}
+                            disabled={!adminName.trim() || (!['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) && adminPin.length < 4)}
                             className="flex-1 py-3.5 bg-amber-600 hover:bg-amber-700 text-white rounded-2xl transition-all font-bold text-sm shadow-lg shadow-amber-100/50 flex items-center justify-center gap-2 active:scale-95"
                           >
                             <ShieldCheck size={16} className="stroke-[2.5]" />
@@ -1394,19 +1315,11 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
                           </label>
                           <select
                             value={category}
-                            onChange={(e) => {
-                              const val = e.target.value as any;
-                              setCategory(val);
-                              if (val === 'saldo_awal') {
-                                if (!desc.trim()) setDesc('Saldo Awal Kas');
-                                if (!sourceRecipient.trim()) setSourceRecipient('Kas SNJ Logistik');
-                              }
-                            }}
+                            onChange={(e) => setCategory(e.target.value as any)}
                             className="w-full px-4 py-3.5 rounded-2xl border border-gray-100 bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none transition-all text-sm font-bold text-gray-800 cursor-pointer"
                           >
                             <option value="pengeluaran">Pengeluaran</option>
                             <option value="pemasukan">Pemasukan</option>
-                            <option value="saldo_awal">ℹ️ Saldo Awal (Modal Awal Kas)</option>
                           </select>
                         </div>
 
@@ -1431,18 +1344,17 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
                             <DollarSign size={12} /> Nominal (Rp)
                           </label>
                           <input
-                            type="text"
-                            inputMode="numeric"
+                            type="number"
                             required
                             value={amount}
-                            onChange={(e) => setAmount(formatNumberWithDots(e.target.value))}
+                            onChange={(e) => setAmount(e.target.value)}
                             placeholder="0"
                             className="w-full px-4 py-3.5 rounded-2xl border border-gray-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none transition-all text-sm font-bold text-gray-800"
                           />
                         </div>
 
                         {/* Interactive dynamic QRIS segment */}
-                        {parseFloat(amount.replace(/\D/g, '')) > 0 && (
+                        {parseFloat(amount) > 0 && (
                           <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 space-y-3">
                             <button
                               type="button"
@@ -1463,11 +1375,11 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
                                 exit={{ opacity: 0, height: 0 }}
                                 className="flex flex-col items-center justify-center pt-2 space-y-2 border-t border-gray-200/50"
                               >
-                                <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest text-center">Scan QRIS Dinamis (Rp {parseFloat(amount.replace(/\D/g, '')).toLocaleString('id-ID')})</p>
+                                <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest text-center">Scan QRIS Dinamis (Rp {parseFloat(amount).toLocaleString('id-ID')})</p>
                                 <div className="w-56 h-56 bg-white p-2 rounded-xl border border-gray-100 shadow-inner flex items-center justify-center relative overflow-hidden shrink-0">
                                   <img 
                                     src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
-                                      generateDynamicQRIS(qrisText, parseFloat(amount.replace(/\D/g, '')))
+                                      generateDynamicQRIS(qrisText, parseFloat(amount))
                                     )}`} 
                                     alt="Dynamic transaction QRIS" 
                                     className="w-full h-full object-contain"
@@ -1582,12 +1494,11 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
                           animate={{ opacity: 1 }}
                           exit={{ opacity: 0 }}
                           onMouseDown={(e) => startLongPress(t.id, e)}
-                          onMouseMove={moveLongPress}
                           onMouseUp={() => endLongPress(true, t.id)}
                           onMouseLeave={() => endLongPress(false)}
                           onTouchStart={(e) => startLongPress(t.id, e)}
-                          onTouchMove={moveLongPress}
                           onTouchEnd={() => endLongPress(true, t.id)}
+                          onTouchMove={handleTouchMove}
                           onTouchCancel={() => endLongPress(false)}
                           onContextMenu={(e) => {
                             e.preventDefault();
@@ -2030,21 +1941,25 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
                   <label className="text-[10px] uppercase font-bold text-gray-400 tracking-wider block ml-1">
                     Nama Admin
                   </label>
-                  <select
+                  <input
+                    type="text"
                     value={adminName}
                     onChange={(e) => {
                       setAdminName(e.target.value);
                       setAdminError('');
                     }}
-                    className="w-full px-4 py-3 rounded-2xl border border-gray-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none transition-all text-sm font-bold bg-white text-gray-800"
-                  >
-                    <option value="">-- Pilih Pengelola --</option>
-                    {adminsList.map((a) => (
-                      <option key={a.id} value={a.name}>
-                        {a.name} {a.email ? `(${a.email})` : ''}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder="Masukkan nama Anda..."
+                    className="w-full px-4 py-3 rounded-2xl border border-gray-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none transition-all text-sm font-bold animate-none"
+                  />
+                  {['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: -5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="text-[10px] font-extrabold text-amber-800 bg-amber-50 border border-amber-100 px-3 py-1 rounded-xl flex items-center p-2 mt-1 gap-1.5 animate-none"
+                    >
+                      <span>🌟 Super Admin Terdaftar: Bebas PIN!</span>
+                    </motion.div>
+                  )}
                 </div>
 
                 <div className="space-y-1.5 text-left">
@@ -2053,25 +1968,20 @@ export default function TransactionList({ minimal = false }: { minimal?: boolean
                   </label>
                   <input
                     type="password"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
                     maxLength={4}
-                    value={adminPin}
+                    value={['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) ? '1234' : adminPin}
                     onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '');
-                      setAdminPin(val);
+                      setAdminPin(e.target.value);
                       setAdminError('');
-                      if (val.length === 4) {
-                        handleGlobalAdminVerifyTx(val);
-                      }
                     }}
-                    placeholder="••••"
+                    disabled={['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase())}
+                    placeholder={['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) ? '✓✓✓✓' : '••••'}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         handleGlobalAdminVerifyTx();
                       }
                     }}
-                    className="w-full px-4 py-3 rounded-2xl border border-gray-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none transition-all text-sm font-bold text-center tracking-[0.5em]"
+                    className={`w-full px-4 py-3 rounded-2xl border border-gray-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none transition-all text-sm font-bold text-center tracking-[0.5em] ${['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) ? 'bg-amber-50/20 text-amber-500 border-dashed border-amber-200 cursor-not-allowed' : ''}`}
                   />
                 </div>
 

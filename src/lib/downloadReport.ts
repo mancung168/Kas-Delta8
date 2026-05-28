@@ -97,8 +97,8 @@ export function downloadMonthlyReport(
   let txIndex = 1;
   transactions.forEach((tx) => {
     const tDate = formatReportDate(tx.date);
-    const catStr = tx.category === 'pemasukan' ? 'Pemasukan' : tx.category === 'saldo_awal' ? 'Saldo Awal' : 'Pengeluaran';
-    const nominal = (tx.category === 'pemasukan' || tx.category === 'saldo_awal') ? tx.amount : -tx.amount;
+    const catStr = tx.category === 'pemasukan' ? 'Pemasukan' : 'Pengeluaran';
+    const nominal = tx.category === 'pemasukan' ? tx.amount : -tx.amount;
     rows.push([
       txIndex.toString(),
       tDate,
@@ -339,12 +339,8 @@ export function downloadMonthlyReportPDF(
     doc.text(formatReportDate(tx.date), rX + 2, y + 4.5); rX += 22;
     
     const isPemasukan = tx.category === 'pemasukan';
-    const isSaldoAwal = tx.category === 'saldo_awal';
     doc.setFont('helvetica', 'bold');
-    if (isSaldoAwal) {
-      doc.setTextColor(100, 116, 139);
-      doc.text('Saldo Awal', rX + 2, y + 4.5);
-    } else if (isPemasukan) {
+    if (isPemasukan) {
       doc.setTextColor(16, 185, 129);
       doc.text('Pemasukan', rX + 2, y + 4.5);
     } else {
@@ -359,10 +355,7 @@ export function downloadMonthlyReportPDF(
     doc.text(safeTruncate(tx.description || '-', 28), rX + 2, y + 4.5); rX += 48;
     
     doc.setFont('helvetica', 'bold');
-    if (isSaldoAwal) {
-      doc.setTextColor(100, 116, 139);
-      doc.text(`Rp ${tx.amount.toLocaleString('id-ID')}`, margin + contentWidth - 2, y + 4.5, { align: 'right' });
-    } else if (isPemasukan) {
+    if (isPemasukan) {
       doc.setTextColor(16, 185, 129);
       doc.text(`+Rp ${tx.amount.toLocaleString('id-ID')}`, margin + contentWidth - 2, y + 4.5, { align: 'right' });
     } else {

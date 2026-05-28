@@ -7,9 +7,7 @@ import {
   User
 } from 'firebase/auth';
 import { collection, query, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db, handleFirestoreError, OperationType, messaging, activeDatabaseId, configuredDatabaseId, isFirestorePermissionDenied } from './lib/firebase';
-import firebaseConfig from '../firebase-applet-config.json';
-import firestoreRulesText from '../firestore.rules?raw';
+import { auth, db, handleFirestoreError, OperationType, messaging } from './lib/firebase';
 import { isEmailRegistered, getAdminByEmail } from './lib/adminService';
 import MemberList from './components/MemberList';
 import TransactionList from './components/TransactionList';
@@ -54,13 +52,6 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const userRef = useRef<User | null>(null);
   const isSessionTerminatingRef = useRef(false);
-  const [isIframe, setIsIframe] = useState(false);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setIsIframe(window.self !== window.top);
-    }
-  }, []);
 
   useEffect(() => {
     userRef.current = user;
@@ -69,15 +60,22 @@ export default function App() {
   const [isAdminSuperAdmin, setIsAdminSuperAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabType>('driver');
-  const [loginError, setLoginError] = useState<{ code: string; message: string; isDomainError: boolean; isConfigError?: boolean; isCancellation?: boolean; isPermissionError?: boolean } | null>(null);
+  const [loginError, setLoginError] = useState<{ code: string; message: string; isDomainError: boolean; isCancellation?: boolean } | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-  const [isSigningIn, setIsSigningIn] = useState(false);
 
   // Menu and Modals state
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [showChangeNicknameModal, setShowChangeNicknameModal] = useState(false);
   const [showChangePinModal, setShowChangePinModal] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [showFcmModal, setShowFcmModal] = useState(false);
+  const [fcmToken, setFcmToken] = useState(() => localStorage.getItem('fcm_token_cache') || '');
+  const [fcmPermission, setFcmPermission] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'default');
+  const [fcmTestTitle, setFcmTestTitle] = useState('Tes Notifikasi Push');
+  const [fcmTestBody, setFcmTestBody] = useState('Koneksi FCM Server Sukses!');
+  const [sendingFcmTest, setSendingFcmTest] = useState(false);
+  const [fcmTestResponse, setFcmTestResponse] = useState<{ success: boolean; message: string } | null>(null);
+  const [copiedToken, setCopiedToken] = useState(false);
 
   const [newNickname, setNewNickname] = useState('');
   const [nicknameError, setNicknameError] = useState('');
@@ -103,21 +101,17 @@ export default function App() {
   const [pendingVerifications, setPendingVerifications] = useState<any[]>([]);
   const [showRulesAlert, setShowRulesAlert] = useState(false);
   const [copiedRules, setCopiedRules] = useState(false);
-  const [databaseOverrideCleared, setDatabaseOverrideCleared] = useState(false);
+  
+  // Frame breakaway state
+  const [currentUrl, setCurrentUrl] = useState('');
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setCurrentUrl(window.location.href);
+    }
+  }, []);
   
   // Real-time network monitor state
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
-  const databaseOverride = typeof localStorage !== 'undefined'
-    ? localStorage.getItem('FIRESTORE_DATABASE_ID_OVERRIDE')
-    : null;
-  const hasDatabaseOverride = !!databaseOverride;
-  const isUsingNonDefaultDatabase = activeDatabaseId !== '(default)';
-
-  const clearDatabaseOverride = () => {
-    if (typeof localStorage === 'undefined') return;
-    localStorage.removeItem('FIRESTORE_DATABASE_ID_OVERRIDE');
-    setDatabaseOverrideCleared(true);
-  };
 
   // Monitor connectivity state
   useEffect(() => {
@@ -147,6 +141,77 @@ export default function App() {
       window.removeEventListener('firestore-permission-denied', handlePermissionDenied);
     };
   }, []);
+
+  // Monitor FCM token loaded and update state dynamically
+  useEffect(() => {
+    const handleFcmTokenLoaded = (e: Event) => {
+      const token = (e as CustomEvent).detail;
+      setFcmToken(token);
+    };
+    window.addEventListener('fcm-token-loaded', handleFcmTokenLoaded);
+    return () => {
+      window.removeEventListener('fcm-token-loaded', handleFcmTokenLoaded);
+    };
+  }, []);
+
+  const requestFcmPermission = async () => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      try {
+        const permission = await Notification.requestPermission();
+        setFcmPermission(permission);
+        if (permission === 'granted' && messaging) {
+          const { getToken } = await import('firebase/messaging');
+          const token = await getToken(messaging);
+          if (token) {
+            setFcmToken(token);
+            localStorage.setItem('fcm_token_cache', token);
+            
+            // Sync with backend immediately
+            await fetch('/api/fcm/register', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                token: token,
+                nickname: localStorage.getItem('ADMIN_NICKNAME') || 'Admin',
+                email: user?.email || '',
+              })
+            });
+            console.log('FCM single token synchronized on-the-fly.');
+          }
+        }
+      } catch (err) {
+        console.error('Failed to request or get FCM token:', err);
+      }
+    }
+  };
+
+  const sendFcmTest = async () => {
+    if (!fcmToken) return;
+    setSendingFcmTest(true);
+    setFcmTestResponse(null);
+    try {
+      const response = await fetch('/api/fcm/send-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: fcmToken,
+          title: fcmTestTitle,
+          body: fcmTestBody,
+          adminName: localStorage.getItem('ADMIN_NICKNAME') || 'Admin'
+        })
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setFcmTestResponse({ success: true, message: 'Tes notifikasi FCM berhasil antre! Periksa desktop/ponsel Anda.' });
+      } else {
+        setFcmTestResponse({ success: false, message: data.error || 'Gateway server FCM melaporkan kesalahan.' });
+      }
+    } catch (err: any) {
+      setFcmTestResponse({ success: false, message: err.message || 'Gagal menghubungi server API.' });
+    } finally {
+      setSendingFcmTest(false);
+    }
+  };
 
   // Fetch pending verifications in real-time
   useEffect(() => {
@@ -195,23 +260,17 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
-        console.log("onAuthStateChanged triggered for user:", {
-          uid: currentUser.uid,
-          email: currentUser.email,
-          providerData: currentUser.providerData?.map(p => ({ providerId: p.providerId, email: p.email }))
-        });
         isSessionTerminatingRef.current = true; // Suspend permission-denied alerts during auth transitions/checks
         setLoading(true);
         try {
-          const userEmail = currentUser.email || currentUser.providerData?.[0]?.email || null;
-          const registered = await isEmailRegistered(userEmail);
+          const registered = await isEmailRegistered(currentUser.email);
           if (!registered) {
             isSessionTerminatingRef.current = true;
             await signOut(auth);
             setUser(null);
             setLoginError({
               code: 'unregistered-email',
-              message: 'Email Anda (' + (userEmail || 'tidak diketahui') + ') tidak terdaftar sebagai pengelola (Admin) Kas SNJ Logistik. Silakan hubungi Super Admin untuk mendaftarkan email Anda.',
+              message: 'Email Anda (' + currentUser.email + ') tidak terdaftar sebagai pengelola (Admin) Kas SNJ Logistik. Silakan hubungi Super Admin untuk mendaftarkan email Anda.',
               isDomainError: false,
               isCancellation: false
             });
@@ -222,12 +281,11 @@ export default function App() {
           isSessionTerminatingRef.current = false;
           setUser(currentUser);
           let isSuper = false;
-          const userEmailLower = userEmail ? userEmail.toLowerCase() : '';
-          if (userEmailLower === 'mancung168@gmail.com' || userEmailLower === 'gptspay@gmail.com') {
+          if (currentUser.email && (currentUser.email.toLowerCase() === 'mancung168@gmail.com' || currentUser.email.toLowerCase() === '4nonymous168@gmail.com')) {
             isSuper = true;
-            localStorage.setItem('ADMIN_NICKNAME', userEmailLower === 'gptspay@gmail.com' ? 'GPTSPay_Admin' : 'Mancung_168');
+            localStorage.setItem('ADMIN_NICKNAME', currentUser.email.toLowerCase() === '4nonymous168@gmail.com' ? '4nonymous168' : 'Mancung_168');
           } else {
-            const adminRecord = await getAdminByEmail(userEmail);
+            const adminRecord = await getAdminByEmail(currentUser.email);
             if (adminRecord) {
               isSuper = adminRecord.role === 'super-admin';
               if (adminRecord.name) {
@@ -235,12 +293,11 @@ export default function App() {
               }
             }
           }
-          localStorage.setItem('ADMIN_EMAIL', userEmail || '');
+          localStorage.setItem('ADMIN_EMAIL', currentUser.email || '');
           localStorage.setItem('ADMIN_ROLE', isSuper ? 'super-admin' : 'admin');
           setIsAdminSuperAdmin(isSuper);
         } catch (err) {
           console.error('Error verifying email registration state:', err);
-          const isPermissionErr = isFirestorePermissionDenied(err);
           isSessionTerminatingRef.current = true;
           await signOut(auth);
           setUser(null);
@@ -248,18 +305,6 @@ export default function App() {
           localStorage.removeItem('ADMIN_EMAIL');
           localStorage.removeItem('ADMIN_ROLE');
           setIsAdminSuperAdmin(false);
-          setLoginError({
-            code: isPermissionErr ? 'firestore-permission-denied' : 'admin-verification-failed',
-            message: isPermissionErr
-              ? `Firestore menolak akses saat memverifikasi akun admin. Periksa Firestore Rules, koleksi admins/admins_by_email, dan database aktif "${activeDatabaseId}".`
-              : 'Verifikasi akun admin gagal. Silakan coba lagi atau periksa konfigurasi Firebase Anda.',
-            isDomainError: false,
-            isCancellation: false,
-            isPermissionError: isPermissionErr
-          });
-          if (isPermissionErr) {
-            setShowRulesAlert(true);
-          }
         }
         setLoading(false);
       } else {
@@ -277,12 +322,8 @@ export default function App() {
   }, []);
 
   const login = async () => {
-    if (isSigningIn) return;
-    setIsSigningIn(true);
     setLoginError(null);
     const provider = new GoogleAuthProvider();
-    provider.addScope('email');
-    provider.addScope('profile');
     provider.setCustomParameters({ prompt: 'select_account' });
     try {
       await signInWithPopup(auth, provider);
@@ -290,18 +331,14 @@ export default function App() {
       console.error("Login failed:", error);
       const isDomainErr = error?.code === 'auth/unauthorized-domain' || error?.message?.includes('unauthorized-domain');
       const isCancellation = error?.code === 'auth/popup-closed-by-user' || error?.code === 'auth/cancelled-popup-request';
-      const isConfigErr = error?.code === 'auth/configuration-not-found' || error?.message?.includes('configuration-not-found');
       setLoginError({
         code: error?.code || 'unknown',
         message: isCancellation 
-          ? 'Masuk dibatalkan atau terblokir.' 
+          ? 'Masuk dibatalkan.' 
           : (error?.message || 'Gagal masuk. Silakan coba lagi.'),
         isDomainError: isDomainErr,
-        isConfigError: isConfigErr,
         isCancellation: isCancellation
       });
-    } finally {
-      setIsSigningIn(false);
     }
   };
 
@@ -315,23 +352,10 @@ export default function App() {
 
   if (!user) {
     const currentDomain = typeof window !== 'undefined' ? window.location.hostname : '';
-    
-    // Dynamically derive dev and pre domains from the current hostname to make it match any instance.
-    let devDomain = '';
-    let preDomain = '';
-    if (currentDomain.startsWith('ais-dev-')) {
-      devDomain = currentDomain;
-      preDomain = currentDomain.replace('ais-dev-', 'ais-pre-');
-    } else if (currentDomain.startsWith('ais-pre-')) {
-      preDomain = currentDomain;
-      devDomain = currentDomain.replace('ais-pre-', 'ais-dev-');
-    }
-
     const domainsToAuthorize = Array.from(new Set([
       currentDomain,
-      devDomain,
-      preDomain,
-      'localhost'
+      'ais-dev-ujyd7sl7jdmkgrursvazdz-482896107737.asia-southeast1.run.app',
+      'ais-pre-ujyd7sl7jdmkgrursvazdz-482896107737.asia-southeast1.run.app'
     ].filter(Boolean)));
 
     const handleCopy = (text: string, index: number) => {
@@ -341,34 +365,7 @@ export default function App() {
     };
 
     return (
-      <div className={`theme-${theme} min-h-screen bg-[#FDFCFB] flex flex-col items-center justify-center p-4 relative`}>
-        {isIframe && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="w-full max-w-lg mb-4 bg-blue-50 border border-blue-100 p-4 rounded-2xl flex items-center justify-between gap-3 text-left shadow-sm"
-          >
-            <div className="flex items-start gap-2.5">
-              <Info className="text-blue-600 mt-0.5 shrink-0 animate-pulse" size={18} />
-              <div className="space-y-0.5">
-                <h4 className="text-xs font-black text-blue-900 uppercase tracking-wide">Aplikasi di dalam Frame (Iframe)</h4>
-                <p className="text-[11px] text-blue-700 font-semibold leading-relaxed">
-                  Login Google Auth & verifikasi nota berjalan lebih optimal luar frame (tab baru).
-                </p>
-              </div>
-            </div>
-            <a
-              href={typeof window !== 'undefined' ? window.location.href : '#'}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-3.5 py-2.5 bg-gray-50 hover:bg-gray-100 text-gray-700 hover:text-gray-950 border border-gray-100 font-extrabold text-[11px] rounded-2xl flex items-center gap-1.5 active:scale-95 transition-all shrink-0 uppercase tracking-widest shadow-xs"
-            >
-              <ExternalLink size={14} />
-              Buka Tab Baru
-            </a>
-          </motion.div>
-        )}
-
+      <div className={`theme-${theme} min-h-screen bg-[#FDFCFB] flex flex-col items-center justify-center p-4`}>
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -399,57 +396,25 @@ export default function App() {
                   <h4 className={`text-sm font-bold ${
                     loginError.isCancellation ? 'text-amber-900' : 'text-red-900'
                   }`}>
-                    {loginError.isCancellation 
-                      ? 'Masuk Dibatalkan' 
-                      : (loginError.isPermissionError
-                          ? 'Izin Firestore Ditolak'
-                          : (loginError.isConfigError 
-                              ? 'Google Auth Belum Aktif' 
-                              : 'Gagal Masuk (Autentikasi Ditolak)'))}
+                    {loginError.isCancellation ? 'Masuk Dibatalkan' : 'Gagal Masuk (Autentikasi Ditolak)'}
                   </h4>
                   <p className={`text-xs ${
                     loginError.isCancellation ? 'text-amber-700' : 'text-red-700'
                   }`}>
                     {loginError.isCancellation 
-                      ? 'Proses masuk ditutup sebelum selesai, atau diblokir oleh sistem keamanan browser Anda.'
-                      : (loginError.isPermissionError
-                          ? loginError.message
+                      ? 'Proses masuk ditutup atau dibatalkan. Silakan klik tombol di bawah untuk mencoba lagi.'
                       : (loginError.isDomainError 
                           ? "Domain aplikasi ini belum diizinkan di Firebase Authentication proyek Anda (Error: auth/unauthorized-domain)."
-                          : (loginError.isConfigError
-                              ? "Metode login Google belum diaktifkan di Firebase Console proyek Anda (Error: auth/configuration-not-found)."
-                              : loginError.message)))}
+                          : loginError.message)}
                   </p>
                 </div>
               </div>
 
-              {loginError.isPermissionError && (
-                <div className="bg-white/90 p-3.5 rounded-xl border border-red-100 space-y-3 text-xs text-gray-700 font-sans">
-                  <p className="font-semibold text-gray-900 text-left">Hal yang perlu dicek:</p>
-                  <ol className="list-decimal list-inside space-y-2 leading-relaxed text-left">
-                    <li>Publish Firestore Rules yang terbaru dari file <code>firestore.rules</code>.</li>
-                    <li>Pastikan email Google Anda sudah ada di koleksi <code>admins_by_email</code> atau termasuk admin hardcoded.</li>
-                    <li>Pastikan database Firestore aktif sesuai konfigurasi aplikasi: <strong>{activeDatabaseId}</strong>.</li>
-                  </ol>
-                </div>
-              )}
-
-              {loginError.isCancellation && (
-                <div className="bg-white/90 p-3.5 rounded-xl border border-amber-100 space-y-3 text-xs text-gray-700 font-sans">
-                  <p className="font-semibold text-gray-900 text-left">Tips dan Langkah Penyelesaian:</p>
-                  <ol className="list-decimal list-inside space-y-2 leading-relaxed text-left">
-                    <li>Jangan tutup jendela kecil Google Auth yang muncul sebelum Anda selesai memilih email Anda.</li>
-                    <li>Periksa apakah browser Anda <strong>memblokir Popup</strong> (biasanya ada ikon peringatan di ujung kanan bilah pencarian/URL browser Anda). Jika ada, pilih **Izinkan selalu popup** untuk situs ini.</li>
-                    <li>Sangat direkomendasikan untuk <strong>Membuka Aplikasi di Tab Baru</strong> dengan mengeklik tombol keluar di pojok kanan atas preview AI Studio. Hal ini menghindari batasan keamanan <em>sandbox iframe</em> yang sering memblokir popup Google Auth secara otomatis di beberapa browser (terutama Safari & Firefox).</li>
-                  </ol>
-                </div>
-              )}
-
               {loginError.isDomainError && (
                 <div className="bg-white/90 p-3.5 rounded-xl border border-red-100 space-y-3 text-xs text-gray-700 font-sans">
-                  <p className="font-semibold text-gray-900 text-left">Langkah penyelesaian:</p>
-                  <ol className="list-decimal list-inside space-y-2 leading-relaxed text-left">
-                    <li>Buka <a href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/settings`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-extrabold inline-flex items-center gap-1">Firebase Console <Info size={12} className="inline" /></a></li>
+                  <p className="font-semibold text-gray-900">Langkah penyelesaian:</p>
+                  <ol className="list-decimal list-inside space-y-2 leading-relaxed">
+                    <li>Buka <a href="https://console.firebase.google.com/project/kas-logistik/authentication/settings" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-extrabold inline-flex items-center gap-1">Firebase Console <Info size={12} className="inline" /></a></li>
                     <li>Samping kanan tab, pilih tab <strong>Settings</strong> lalu klik submenu <strong>Authorized Domains</strong> (Domain Terotorisasi).</li>
                     <li>Klik <strong>Add domain</strong> (Tambahkan domain), lalu salin dan tambahkan domain di bawah ini:</li>
                   </ol>
@@ -469,39 +434,15 @@ export default function App() {
                   </div>
                 </div>
               )}
-
-              {loginError.isConfigError && (
-                <div className="bg-white/90 p-3.5 rounded-xl border border-red-100 space-y-3 text-xs text-gray-700 font-sans">
-                  <p className="font-semibold text-gray-900 text-left">Langkah penyelesaian (Aktifkan Google Login):</p>
-                  <ol className="list-decimal list-inside space-y-2 leading-relaxed text-left">
-                    <li>Buka <a href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-extrabold inline-flex items-center gap-1">Firebase Console <Info size={12} className="inline" /></a></li>
-                    <li>Klik tombol <strong>Get Started (Mulai)</strong> pada tab Authentication jika baru pertama kali membukanya.</li>
-                    <li>Di bawah panel <strong>Sign-in method</strong>, klik tombol <strong>Add new provider</strong> lalu pilih <strong>Google</strong>.</li>
-                    <li>Aktifkan sakelar <strong>Enable (Aktifkan)</strong> di kanan atas.</li>
-                    <li>Pilih email dukungan proyek Anda (misal: <code className="bg-gray-100 px-1 rounded font-mono">mancung168@gmail.com</code> atau email pemilik akun) pada bagian <strong>Project support email</strong>.</li>
-                    <li>Klik <strong>Save (Simpan)</strong>.</li>
-                    <li>Kembali ke tab ini dan klik tombol <strong>Masuk dengan Google</strong> lagi!</li>
-                  </ol>
-                </div>
-              )}
             </div>
           )}
 
           <button
             onClick={login}
-            disabled={isSigningIn}
-            className={`w-full font-bold py-4 px-6 rounded-2xl flex items-center justify-center gap-3 transition-all active:scale-95 shadow-lg ${
-              isSigningIn 
-                ? 'bg-blue-400 text-blue-100 cursor-not-allowed shadow-none' 
-                : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-200'
-            }`}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-6 rounded-2xl flex items-center justify-center gap-3 transition-all active:scale-95 shadow-lg shadow-blue-200"
           >
-            {isSigningIn ? (
-              <Loader2 className="animate-spin text-white" size={20} />
-            ) : (
-              <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5 bg-white rounded-full p-0.5" />
-            )}
-            {isSigningIn ? 'Menghubungkan ke Google...' : 'Lanjut dengan Google'}
+            <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5 bg-white rounded-full p-0.5" />
+            Lanjut dengan Google
           </button>
         </motion.div>
       </div>
@@ -519,33 +460,35 @@ export default function App() {
       <NotificationManager user={user} />
       <nav className="bg-white border-b border-gray-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 md:px-8">
-          <div className="flex items-center justify-between h-20 gap-4">
-            <h1 className="text-xl font-bold text-blue-600 tracking-tight hidden md:block shrink-0">LogisticsManager</h1>
-            <div className="flex-1 min-w-0 max-w-[280px] sm:max-w-md md:max-w-none flex items-center bg-gray-100/80 p-1 rounded-xl">
-              {tabs.map((tab) => (
-                <TabButton
-                  key={tab.id}
-                  id={tab.id}
-                  label={tab.label}
-                  icon={tab.icon}
-                  isActive={activeTab === tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  onLongPress={() => console.log('Long press on', tab.label)}
-                />
-              ))}
+          <div className="flex items-center justify-between h-20">
+            <div className="flex items-center gap-8">
+              <h1 className="text-xl font-bold text-blue-600 tracking-tight hidden md:block">LogisticsManager</h1>
+              <div className="flex items-center bg-gray-100/80 p-1 rounded-xl overflow-x-auto max-w-[calc(100vw-120px)] md:max-w-none no-scrollbar">
+                {tabs.map((tab) => (
+                  <TabButton
+                    key={tab.id}
+                    id={tab.id}
+                    label={tab.label}
+                    icon={tab.icon}
+                    isActive={activeTab === tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    onLongPress={() => console.log('Long press on', tab.label)}
+                  />
+                ))}
+              </div>
             </div>
-            <div className="flex items-center gap-2 max-w-fit shrink-0">
-              {/* Breakout of iframe button if inside iframe */}
-              {isIframe && (
+            <div className="flex items-center gap-2.5 md:gap-3">
+              {/* Exit Frame / Buka Tab Baru Button */}
+              {currentUrl && (
                 <a
-                  href={typeof window !== 'undefined' ? window.location.href : '#'}
+                  href={currentUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-1.5 p-2.5 sm:px-3.5 bg-gray-50 hover:bg-gray-100 text-gray-700 hover:text-gray-950 border border-gray-100 font-extrabold rounded-2xl transition-all select-none active:scale-95 flex-shrink-0 text-xs shadow-xs"
-                  title="Keluarkan aplikasi dari frame (Buka di tab baru)"
+                  className="flex items-center gap-1.5 px-3.5 py-2.5 bg-gray-50 hover:bg-gray-100 text-gray-700 hover:text-gray-950 font-bold rounded-2xl transition-all border border-gray-100 select-none active:scale-95 flex-shrink-0"
+                  title="Buka Aplikasi di Tab Baru (Keluar dari Frame)"
                 >
-                  <ExternalLink size={18} />
-                  <span className="hidden sm:inline">Keluarkan dari Frame</span>
+                  <ExternalLink size={17} className="text-gray-500" />
+                  <span className="hidden sm:inline text-xs">Buka Tab Baru</span>
                 </a>
               )}
 
@@ -673,10 +616,11 @@ export default function App() {
                     setIsMenuOpen(!isMenuOpen);
                     setIsNotificationsOpen(false);
                   }}
-                  className="flex items-center justify-center gap-2 p-2.5 md:px-4 bg-gray-50 hover:bg-gray-100 text-gray-700 hover:text-gray-950 font-bold rounded-2xl transition-all border border-gray-100 select-none active:scale-95 flex-shrink-0"
+                  className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 hover:bg-gray-100 text-gray-700 hover:text-gray-950 font-bold rounded-2xl transition-all border border-gray-100 select-none active:scale-95 flex-shrink-0"
                 >
                   <Menu size={18} />
                   <span className="hidden md:inline text-xs">Menu Admin</span>
+                  <ChevronDown size={14} className={`transition-transform duration-200 ${isMenuOpen ? 'rotate-180' : ''}`} />
                 </button>
 
               <AnimatePresence>
@@ -766,6 +710,21 @@ export default function App() {
                         Ganti pin
                       </button>
 
+                      <button
+                        onClick={() => {
+                          setShowFcmModal(true);
+                          setIsMenuOpen(false);
+                          // Refresh current browser notification permission
+                          if (typeof Notification !== 'undefined') {
+                            setFcmPermission(Notification.permission);
+                          }
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left text-xs font-semibold transition-all hover:bg-gray-50 text-gray-700"
+                      >
+                        <Bell size={16} className="text-gray-400" />
+                        Pengaturan Push (FCM)
+                      </button>
+
                       <div className="border-t border-gray-100 my-2" />
 
                       {/* Theme selection integrated inside Admin Menu */}
@@ -842,8 +801,8 @@ export default function App() {
                 <ShieldCheck className="text-amber-605 shrink-0 mt-1 text-amber-600" size={24} />
                 <div className="space-y-1.5">
                   <h3 className="text-base font-extrabold text-amber-950 font-sans">Konfigurasi Aturan Firestore Diperlukan</h3>
-              <p className="text-xs text-amber-850 leading-relaxed font-sans max-w-4xl text-amber-800">
-                    Kami mendeteksi adanya error <strong>"Missing or insufficient permissions"</strong>. Ini terjadi karena aturan keamanan Firestore pada proyek Firebase <strong>{firebaseConfig.projectId}</strong> menolak akses baca/tulis.
+                  <p className="text-xs text-amber-850 leading-relaxed font-sans max-w-4xl text-amber-800">
+                    Kami mendeteksi adanya error <strong>"Missing or insufficient permissions"</strong>. Ini terjadi karena aturan keamanan Firestore pada proyek Firebase <strong>kas-logistik</strong> menolak akses baca/tulis.
                     Ikuti langkah di bawah ini untuk menerapkan aturan keamanan agar aplikasi dapat bekerja.
                   </p>
                 </div>
@@ -859,39 +818,72 @@ export default function App() {
 
             <div className="bg-white/80 p-5 rounded-2xl border border-amber-100/50 space-y-3 text-xs leading-relaxed text-gray-700">
               <ol className="list-decimal list-inside space-y-2 font-sans font-medium text-gray-800">
-                <li>Buka <a href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/rules`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-extrabold inline-flex items-center gap-1">Aturan Keamanan di Firebase Console <Info size={12} className="inline" /></a></li>
+                <li>Buka <a href="https://console.firebase.google.com/project/kas-logistik/firestore/rules" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-extrabold inline-flex items-center gap-1">Aturan Keamanan di Firebase Console <Info size={12} className="inline" /></a></li>
                 <li>Hapus aturan yang ada di editor, lalu salin dan tempel aturan keamanan di bawah ini penuh:</li>
               </ol>
 
-              <div className="bg-amber-100/60 border border-amber-200 rounded-xl p-3 space-y-2 text-[11px] text-amber-950 font-medium">
-                <p><strong>Diagnostik Firestore:</strong> proyek aktif <code>{firebaseConfig.projectId}</code>, database terkonfigurasi <code>{configuredDatabaseId}</code>, database yang sedang dipakai app <code>{activeDatabaseId}</code>.</p>
-                {isUsingNonDefaultDatabase && (
-                  <p>Aplikasi ini sedang memakai database non-default. Pastikan rules dan koleksi admin diterapkan pada database tersebut, bukan hanya pada <code>(default)</code>.</p>
-                )}
-                {hasDatabaseOverride && (
-                  <div className="space-y-2">
-                    <p>Terdeteksi override database dari browser: <code>{databaseOverride}</code>. Ini bisa menyebabkan app menunjuk ke database yang salah.</p>
-                    <button
-                      type="button"
-                      onClick={clearDatabaseOverride}
-                      className="px-3 py-2 bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 rounded-lg font-extrabold text-[10px] uppercase tracking-wide transition-all"
-                    >
-                      Hapus Override Database
-                    </button>
-                    {databaseOverrideCleared && (
-                      <p className="text-emerald-700">Override dihapus. Muat ulang halaman untuk memakai database konfigurasi bawaan.</p>
-                    )}
-                  </div>
-                )}
-              </div>
-
               <div className="relative group/code mt-3">
                 <pre className="bg-gray-900 text-gray-100 p-4 rounded-xl font-mono text-[11px] overflow-x-auto max-h-48 text-left leading-normal border border-gray-800 select-all">
-{firestoreRulesText}
+{`rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSignedIn();
+    }
+
+    match /members/{memberId} {
+      allow read: if true;
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+
+    match /activities/{activityId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(activityId);
+      allow update, delete: if false;
+    }
+
+    match /settings/{settingId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(settingId);
+      allow delete: if false;
+    }
+  }
+}`}
                 </pre>
                 <button
                   onClick={() => {
-                    navigator.clipboard.writeText(firestoreRulesText);
+                    const rulesText = `rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /{document=**} {\n      allow read, write: if false;\n    }\n\n    function isSignedIn() {\n      return request.auth != null;\n    }\n    \n    function isValidId(id) {\n      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\\\-]+$');\n    }\n\n    function incoming() {\n      return request.resource.data;\n    }\n\n    function existing() {\n      return resource.data;\n    }\n\n    match /admins/{adminId} {\n      allow read: if isSignedIn();\n      allow create, update, delete: if isSignedIn();\n    }\n\n    match /members/{memberId} {\n      allow read: if true;\n      allow create: if isSignedIn();\n      allow update: if isSignedIn();\n      allow delete: if isSignedIn();\n    }\n\n    match /transactions/{transactionId} {\n      allow read: if isSignedIn();\n      allow create: if isSignedIn();\n      allow update: if isSignedIn();\n      allow delete: if isSignedIn();\n    }\n\n    match /activities/{activityId} {\n      allow read: if isSignedIn();\n      allow create: if isSignedIn() && isValidId(activityId);\n      allow update, delete: if false;\n    }\n\n    match /settings/{settingId} {\n      allow read: if isSignedIn();\n      allow create, update: if isSignedIn() && isValidId(settingId);\n      allow delete: if false;\n    }\n  }\n}`;
+                    navigator.clipboard.writeText(rulesText);
                     setCopiedRules(true);
                     setTimeout(() => setCopiedRules(false), 3000);
                   }}
@@ -1106,13 +1098,10 @@ export default function App() {
                   </label>
                   <input
                     type="password"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
                     maxLength={4}
                     value={currentPin}
                     onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '');
-                      setCurrentPin(val);
+                      setCurrentPin(e.target.value);
                       setPinError('');
                     }}
                     placeholder="••••"
@@ -1126,13 +1115,10 @@ export default function App() {
                   </label>
                   <input
                     type="password"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
                     maxLength={4}
                     value={newPin}
                     onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '');
-                      setNewPin(val);
+                      setNewPin(e.target.value);
                       setPinError('');
                     }}
                     placeholder="••••"
@@ -1190,6 +1176,193 @@ export default function App() {
                   </button>
                 </div>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Cloud Push Notification (FCM) Modal */}
+      <AnimatePresence>
+        {showFcmModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setShowFcmModal(false);
+                setFcmTestResponse(null);
+                setCopiedToken(false);
+              }}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-md bg-white rounded-[2rem] shadow-2xl p-6 md:p-8 overflow-hidden z-[110] border border-gray-100"
+            >
+              {/* Header */}
+              <div className="text-center mb-6">
+                <div className="w-14 h-14 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-3.5 relative">
+                  <Bell size={24} className="stroke-[2.5]" />
+                  <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-white animate-ping" />
+                  <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-white" />
+                </div>
+                <h3 className="text-xl font-black text-gray-950 leading-tight">Pengaturan Notifikasi Push</h3>
+                <p className="text-[10px] text-gray-400 font-extrabold uppercase tracking-widest mt-1">Firebase Cloud Messaging</p>
+              </div>
+
+              {/* Status Section */}
+              <div className="space-y-4 mb-6">
+                <div className="bg-gray-50/70 p-4 rounded-2xl border border-gray-100/50 space-y-3.5 text-left">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-gray-500 font-bold shrink-0">Izin Notifikasi Browser:</span>
+                    <span className={`px-2.5 py-1 rounded-xl font-black text-[10px] uppercase tracking-wider ${
+                      fcmPermission === 'granted'
+                        ? 'bg-green-50 text-green-700 border border-green-150'
+                        : fcmPermission === 'denied'
+                        ? 'bg-red-50 text-red-700 border border-red-150'
+                        : 'bg-amber-50 text-amber-700 border border-amber-150'
+                    }`}>
+                      {fcmPermission === 'granted' ? 'Diizinkan ✅' : fcmPermission === 'denied' ? 'Ditolak ❌' : 'Ditanyakan ⚠️'}
+                    </span>
+                  </div>
+
+                  {fcmPermission !== 'granted' && (
+                    <div className="text-[11px] text-gray-400 leading-relaxed font-normal bg-white p-3 rounded-xl border border-gray-100/70">
+                      {fcmPermission === 'denied' ? (
+                        <span>
+                          <strong>Izin Notifikasi Diblokir.</strong> Atur ulang izin notifikasi di setting browser Anda (klik ikon gembok di sebelah URL) agar dapat menerima pemberitahuan.
+                        </span>
+                      ) : (
+                        <span>
+                          Dapatkan pemberitahuan iuran kas real-time langsung di browser/ponsel Anda ketika ada aktivitas keuangan baru.
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {fcmPermission !== 'granted' && (
+                    <button
+                      type="button"
+                      onClick={requestFcmPermission}
+                      className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl tracking-wider uppercase transition-all flex items-center justify-center gap-1.5 active:scale-95 shadow-md shadow-blue-105"
+                    >
+                      <Bell size={13} className="stroke-[2.5]" />
+                      Berikan Izin Notifikasi
+                    </button>
+                  )}
+                </div>
+
+                {/* Integration Details / Token */}
+                {fcmPermission === 'granted' && (
+                  <div className="space-y-2 text-left">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs text-gray-500 font-bold">FCM Device Token Anda:</label>
+                      {fcmToken && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(fcmToken);
+                            setCopiedToken(true);
+                            setTimeout(() => setCopiedToken(false), 2000);
+                          }}
+                          className="text-[10px] text-blue-600 hover:text-blue-700 font-black flex items-center gap-1.5 uppercase select-none active:scale-95 animate-fade-in"
+                        >
+                          <Copy size={11} className="stroke-[2.5]" />
+                          {copiedToken ? 'Tersalin! ✅' : 'Salin Token'}
+                        </button>
+                      )}
+                    </div>
+                    {fcmToken ? (
+                      <div className="bg-gray-50 border border-gray-100 rounded-2xl p-3 font-mono text-[10px] text-gray-600 select-all leading-normal whitespace-normal break-all max-h-20 overflow-y-auto">
+                        {fcmToken}
+                      </div>
+                    ) : (
+                      <div className="py-4 text-center text-xs text-gray-400 italic bg-gray-50 rounded-2xl border border-dashed border-gray-200 flex flex-col items-center justify-center gap-1.5 select-none">
+                        <Loader2 size={16} className="animate-spin text-gray-400" />
+                        Mengambil token FCM dari Google, lapor...
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Test Push Section */}
+                {fcmPermission === 'granted' && fcmToken && (
+                  <div className="border-t border-gray-100 pt-4 mt-2 space-y-3.5 text-left">
+                    <span className="text-xs font-bold text-gray-900 block">Kirim Contoh Tes Notifikasi:</span>
+                    
+                    <div className="space-y-2.5">
+                      <div>
+                        <label className="text-[10px] uppercase font-black tracking-wide text-gray-400">Judul Pesan</label>
+                        <input
+                          type="text"
+                          value={fcmTestTitle}
+                          onChange={(e) => setFcmTestTitle(e.target.value)}
+                          placeholder="Contoh: Pembayaran Iuran"
+                          className="w-full bg-gray-50 border border-gray-150 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all font-semibold text-gray-800"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] uppercase font-black tracking-wide text-gray-400">Isi Notifikasi</label>
+                        <input
+                          type="text"
+                          value={fcmTestBody}
+                          onChange={(e) => setFcmTestBody(e.target.value)}
+                          placeholder="Contoh: Iuran anggota Mancung berhasil dikonfirmasi"
+                          className="w-full bg-gray-50 border border-gray-150 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all font-semibold text-gray-800"
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={sendFcmTest}
+                      disabled={sendingFcmTest || !fcmToken}
+                      className="w-full py-3 bg-slate-900 hover:bg-slate-950 text-white font-black text-xs rounded-xl tracking-wider uppercase transition-all flex items-center justify-center gap-1.5 active:scale-95 shadow-md disabled:opacity-50"
+                    >
+                      {sendingFcmTest ? (
+                        <>
+                          <Loader2 size={13} className="animate-spin" />
+                          Mengirim...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles size={13} className="fill-white" />
+                          Kirim Tes via Server
+                        </>
+                      )}
+                    </button>
+
+                    {fcmTestResponse && (
+                      <div className={`p-3.5 rounded-xl border text-xs leading-relaxed flex items-start gap-2 ${
+                        fcmTestResponse.success 
+                          ? 'bg-green-50 text-green-800 border-green-100' 
+                          : 'bg-red-50 text-red-800 border-red-100'
+                      }`}>
+                        <div className="mt-0.5 font-bold">
+                          {fcmTestResponse.success ? '✓' : '⚠'}
+                        </div>
+                        <p className="font-semibold">{fcmTestResponse.message}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Close Footer */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowFcmModal(false);
+                  setFcmTestResponse(null);
+                  setCopiedToken(false);
+                }}
+                className="w-full py-3.5 bg-gray-50 hover:bg-gray-100 text-gray-600 hover:text-gray-850 font-bold rounded-2xl transition-all text-xs"
+              >
+                Tutup Jendela
+              </button>
             </motion.div>
           </div>
         )}

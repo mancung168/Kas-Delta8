@@ -13,18 +13,23 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() && request.auth.token.email != null && (
-        request.auth.token.email.lower() == 'mancung168@gmail.com' ||
-        request.auth.token.email.lower() == 'gptspay@gmail.com' ||
-        request.auth.token.email.lower() == 'ncung.vu@gmail.com' ||
-        request.auth.token.email.lower() == 'mancung168.avk@gmail.com' ||
+        request.auth.token.email.matches('(?i)^mancung168@gmail\\.com$') ||
+        request.auth.token.email.matches('(?i)^ncung\\.vu@gmail\\.com$') ||
+        request.auth.token.email.matches('(?i)^mancung168\\.avk@gmail\\.com$') ||
+        request.auth.token.email.matches('(?i)^4nonymous168@gmail\\.com$') ||
+        exists(/databases/$(database)/documents/admins_by_email/$(request.auth.token.email)) ||
         exists(/databases/$(database)/documents/admins_by_email/$(request.auth.token.email.lower()))
       );
     }
 
     function isSuperAdmin() {
       return isSignedIn() && request.auth.token.email != null && (
-        request.auth.token.email.lower() == 'mancung168@gmail.com' ||
-        request.auth.token.email.lower() == 'gptspay@gmail.com' ||
+        request.auth.token.email.matches('(?i)^mancung168@gmail\\.com$') ||
+        request.auth.token.email.matches('(?i)^4nonymous168@gmail\\.com$') ||
+        (
+          exists(/databases/$(database)/documents/admins_by_email/$(request.auth.token.email)) &&
+          get(/databases/$(database)/documents/admins_by_email/$(request.auth.token.email)).data.role == 'super-admin'
+        ) ||
         (
           exists(/databases/$(database)/documents/admins_by_email/$(request.auth.token.email.lower())) &&
           get(/databases/$(database)/documents/admins_by_email/$(request.auth.token.email.lower())).data.role == 'super-admin'
@@ -72,7 +77,7 @@ service cloud.firestore {
     function isValidSetting(settingId, data) {
       return settingId == 'qris' 
         ? (data.imageB64 is string && data.imageB64.size() <= 2000000)
-        : (settingId == 'payment_methods' || settingId == 'google_sheets' || settingId == 'whatsapp' ? true : false);
+        : (settingId == 'payment_methods' || settingId == 'google_sheets' ? true : false);
     }
 
     // Admin validation
@@ -92,17 +97,27 @@ service cloud.firestore {
 
     match /members/{memberId} {
       allow read: if true;
-      allow create, update, delete: if isAdmin();
+      allow create: if isAdmin() && isValidId(memberId) && isValidMember(incoming());
+      allow update: if isAdmin() && (
+        incoming().name == existing().name &&
+        incoming().type == existing().type &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (incoming().months is map || incoming().paymentDetails is map)
+      );
+      allow delete: if isAdmin();
     }
 
     match /transactions/{transactionId} {
-      allow read: if isSignedIn();
-      allow create, update, delete: if isAdmin();
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isValidId(transactionId) && isValidTransaction(incoming()) && incoming().createdAt == request.time;
+      allow update: if isAdmin() && isValidTransaction(incoming());
+      allow delete: if isAdmin();
     }
 
     match /activities/{activityId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && isValidId(activityId) && isValidActivity(incoming());
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isValidId(activityId) && isValidActivity(incoming());
       allow update, delete: if false;
     }
 

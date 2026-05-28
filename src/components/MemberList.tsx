@@ -14,10 +14,10 @@ import {
   deleteField
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { Check, Trash2, Search, Banknote, Clock, Pencil, Save, X, Download, Share2, ChevronDown, AlertCircle, Loader2, Phone, Copy, Lock } from 'lucide-react';
+import { Check, Trash2, Search, Banknote, Clock, Pencil, Save, X, Download, Share2, ChevronDown, AlertCircle, Loader2, Phone, Copy } from 'lucide-react';
 import { downloadReceipt, shareReceipt, copyReceiptImageToClipboard, generateReceiptCanvas } from '../lib/downloadReceipt';
 import { sendWaNotification } from '../lib/sendWaNotification';
-import { verifyAdmin, isAdminSuper, getAdmins, AdminItem } from '../lib/adminService';
+import { verifyAdmin } from '../lib/adminService';
 import { motion, AnimatePresence } from 'motion/react';
 import MemberForm from './MemberForm';
 import { generateDynamicQRIS } from '../lib/qris';
@@ -115,7 +115,7 @@ function LongPressWrapper({
   onLongPress,
   onClick,
   children,
-  delay = 850,
+  delay = 950,
   className = "",
   disabled = false,
 }: LongPressWrapperProps) {
@@ -124,7 +124,7 @@ function LongPressWrapper({
   const timerRef = React.useRef<NodeJS.Timeout | null>(null);
   const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = React.useRef<number>(0);
-  const touchStartPosRef = React.useRef<{ x: number; y: number } | null>(null);
+  const touchStartRef = React.useRef<{ x: number; y: number } | null>(null);
 
   const start = (e: React.MouseEvent | React.TouchEvent) => {
     if (disabled) return;
@@ -133,17 +133,13 @@ function LongPressWrapper({
     setProgress(0);
     startTimeRef.current = Date.now();
 
-    // Store start coords
-    if ('touches' in e && e.touches.length > 0) {
-      touchStartPosRef.current = {
+    if ('touches' in e && e.touches[0]) {
+      touchStartRef.current = {
         x: e.touches[0].clientX,
         y: e.touches[0].clientY,
       };
-    } else if ('clientX' in e) {
-      touchStartPosRef.current = {
-        x: (e as React.MouseEvent).clientX,
-        y: (e as React.MouseEvent).clientY,
-      };
+    } else {
+      touchStartRef.current = null;
     }
 
     const intervalTime = 16;
@@ -162,72 +158,40 @@ function LongPressWrapper({
     }, delay);
   };
 
-  const move = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!isPressing || !startTimeRef.current || !touchStartPosRef.current) return;
-
-    let currentX = 0;
-    let currentY = 0;
-
-    if ('touches' in e && e.touches.length > 0) {
-      currentX = e.touches[0].clientX;
-      currentY = e.touches[0].clientY;
-    } else if ('clientX' in e) {
-      currentX = (e as React.MouseEvent).clientX;
-      currentY = (e as React.MouseEvent).clientY;
-    } else {
-      return;
-    }
-
-    const diffX = Math.abs(currentX - touchStartPosRef.current.x);
-    const diffY = Math.abs(currentY - touchStartPosRef.current.y);
-
-    // If movement exceeds 8px (normal scroll/drag threshold), cancel the long-press interaction
-    if (diffX > 8 || diffY > 8) {
-      end(false);
-    }
-  };
-
   const end = (shouldTriggerClick = true) => {
     if (timerRef.current) clearTimeout(timerRef.current);
     if (intervalRef.current) clearInterval(intervalRef.current);
     timerRef.current = null;
     intervalRef.current = null;
-    touchStartPosRef.current = null;
 
     if (isPressing) {
       setIsPressing(false);
       setProgress(0);
       const pressDuration = Date.now() - startTimeRef.current;
-      startTimeRef.current = 0;
       if (shouldTriggerClick && pressDuration < delay && onClick) {
         onClick();
       }
     }
   };
 
-  // Cancel long-press on any general scrolling event in the page
-  useEffect(() => {
-    if (!isPressing) return;
-
-    const handleScroll = () => {
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!touchStartRef.current || !e.touches[0]) return;
+    const dx = e.touches[0].clientX - touchStartRef.current.x;
+    const dy = e.touches[0].clientY - touchStartRef.current.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    if (distance > 10) { // cancel long press on scrolling/dragging
       end(false);
-    };
-
-    window.addEventListener('scroll', handleScroll, { capture: true, passive: true });
-    return () => {
-      window.removeEventListener('scroll', handleScroll, { capture: true });
-    };
-  }, [isPressing]);
+    }
+  };
 
   return (
     <div
       onMouseDown={start}
-      onMouseMove={move}
       onMouseUp={() => end(true)}
       onMouseLeave={() => end(false)}
       onTouchStart={start}
-      onTouchMove={move}
       onTouchEnd={() => end(true)}
+      onTouchMove={handleTouchMove}
       onTouchCancel={() => end(false)}
       onContextMenu={(e) => {
         e.preventDefault(); // prevent native copy paste/share dialogs during press
@@ -241,12 +205,6 @@ function LongPressWrapper({
 
 export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
   const [members, setMembers] = useState<Member[]>([]);
-  const [adminsList, setAdminsList] = useState<AdminItem[]>([]);
-  
-  useEffect(() => {
-    getAdmins().then(setAdminsList).catch(console.error);
-  }, []);
-
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterMonth, setFilterMonth] = useState<string>('all');
@@ -303,17 +261,6 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
   const [showGlobalAdminVerify, setShowGlobalAdminVerify] = useState(false);
   const [adminTargetAction, setAdminTargetAction] = useState<{ type: 'edit_name' | 'delete_member'; id: string; name: string } | null>(null);
 
-  // Super Admin Status Change Verification States
-  const [showStatusVerify, setShowStatusVerify] = useState(false);
-  const [statusVerifyTarget, setStatusVerifyTarget] = useState<{ memberId: string; month: string; newStatus: 'verified' | 'pending' | 'unpaid' } | null>(null);
-  const [statusVerifyName, setStatusVerifyName] = useState(() => localStorage.getItem('ADMIN_NICKNAME') || '');
-  const [statusVerifyPin, setStatusVerifyPin] = useState('');
-  const [statusVerifyError, setStatusVerifyError] = useState('');
-
-  // Super Admin Status Change Custom Confirmation States (to bypass window.confirm sandbox iframe blocks)
-  const [showStatusConfirm, setShowStatusConfirm] = useState(false);
-  const [statusConfirmTarget, setStatusConfirmTarget] = useState<{ memberId: string; month: string; newStatus: 'verified' | 'pending' | 'unpaid' } | null>(null);
-
   // Receipt State
   const [showReceipt, setShowReceipt] = useState<{
     id?: string;
@@ -328,12 +275,23 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
     memberPhone?: string;
   } | null>(null);
   const [copiedImage, setCopiedImage] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
 
-  const loggedInName = localStorage.getItem('ADMIN_NICKNAME') || '';
-  const loggedInRole = localStorage.getItem('ADMIN_ROLE') || '';
-  const isCurrentlySuper = loggedInRole === 'super-admin' || 
-    ['MANCUNG', 'MANCUNG_168', 'MANCUNG168', 'GPTSPAY_ADMIN', 'GPTSPAY'].includes(loggedInName.trim().toUpperCase());
+  // Custom Confirmation Dialog State
+  const [confirmState, setConfirmState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
+
+  const showConfirm = (title: string, message: string, onConfirm: () => void | Promise<void>) => {
+    setConfirmState({
+      isOpen: true,
+      title,
+      message,
+      onConfirm
+    });
+  };
 
   const handleCopyReceiptImage = async () => {
     if (!showReceipt) return;
@@ -535,18 +493,8 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
     }
   };
 
-  const handleAdminVerify = async (overridePin?: string) => {
-    if (!adminName.trim()) {
-      setAdminError('Nama admin harus diisi');
-      return;
-    }
-    const pinToVerify = overridePin !== undefined ? overridePin : adminPin;
-    const isValid = await verifyAdmin(adminName.trim(), pinToVerify);
-    if (!isValid) {
-      setAdminError('Nama admin atau PIN salah');
-      return;
-    }
-
+  const handleAdminVerify = async () => {
+    const activeAdminName = localStorage.getItem('ADMIN_NICKNAME') || 'Admin';
     if (pendingVerification) {
       performVerification(pendingVerification.id, pendingVerification.month);
     } else if (paymentModal) {
@@ -554,13 +502,12 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
     }
   };
 
-  const handleGlobalAdminVerify = async (overridePin?: string) => {
+  const handleGlobalAdminVerify = async () => {
     if (!adminName.trim()) {
       setAdminError('Nama admin harus diisi');
       return;
     }
-    const pinToVerify = overridePin !== undefined ? overridePin : adminPin;
-    const isValidAdmin = await verifyAdmin(adminName, pinToVerify);
+    const isValidAdmin = await verifyAdmin(adminName, adminPin);
     if (!isValidAdmin) {
       setAdminError('Nama admin atau PIN salah');
       return;
@@ -594,28 +541,18 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
     try {
       await runTransaction(db, async (t) => {
         const memberRef = doc(db, 'members', memberId);
-        const memberSnap = await t.get(memberRef);
-        const currentData = memberSnap.data() || {};
-        const currentFieldDetail = currentData.paymentDetails?.[month] || {};
-
-        const newDetail = {
-          ...currentFieldDetail,
-          status: 'verified',
-          adminName: adminName || currentFieldDetail.adminName || 'Admin',
-          verifiedAt: serverTimestamp()
-        };
-
         const activityRef = doc(collection(db, 'activities'));
 
         t.update(memberRef, {
           [`months.${month}`]: true,
-          [`paymentDetails.${month}`]: newDetail,
+          [`paymentDetails.${month}.status`]: 'verified',
+          [`paymentDetails.${month}.adminName`]: adminName,
           updatedAt: serverTimestamp(),
         });
         
         t.set(activityRef, {
           action: 'verifikasi_iuran',
-          details: formatLogDetails(`[Iuran] ${type === 'driver' ? 'Driver' : 'Helper'} - ${currentData.name || 'Member'} - ${month}/${new Date().getFullYear()} - LUNAS / VERIFIED`),
+          details: formatLogDetails(`[Iuran] ${type === 'driver' ? 'Driver' : 'Helper'} - ${members.find(m => m.id === memberId)?.name || 'Member'} - ${month}/${new Date().getFullYear()} - LUNAS / VERIFIED`),
           adminName: adminName || 'Admin',
           timestamp: serverTimestamp()
         });
@@ -644,9 +581,8 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
 
       setAdminName('');
       setAdminPin('');
-    } catch (error: any) {
+    } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
-      setActionError(error?.message || 'Gagal melakukan verifikasi pembayaran.');
     }
   };
 
@@ -660,44 +596,41 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
     }
   };
 
-  const updatePaymentStatus = async (memberId: string, month: string, newStatus: 'verified' | 'pending' | 'unpaid') => {
+  const updatePaymentStatus = async (memberId: string, month: string, newStatus: 'verified' | 'pending' | 'failed' | 'unpaid') => {
     const path = `members/${memberId}`;
     try {
       const isVerified = newStatus === 'verified';
       const isUnpaid = newStatus === 'unpaid';
       await runTransaction(db, async (t) => {
         const memberRef = doc(db, 'members', memberId);
-        const memberSnap = await t.get(memberRef);
-        const currentData = memberSnap.data() || {};
-
         const activityRef = doc(collection(db, 'activities'));
         
-        const updates: any = {
-          updatedAt: serverTimestamp(),
-        };
-
+        let updates: any = {};
         if (isUnpaid) {
-          updates[`months.${month}`] = deleteField();
-          updates[`paymentDetails.${month}`] = deleteField();
-        } else {
-          updates[`months.${month}`] = isVerified;
-          const currentFieldDetail = currentData.paymentDetails?.[month] || {};
-          const newDetail = {
-            ...currentFieldDetail,
-            status: newStatus,
-            method: currentFieldDetail.method || 'Tunai',
-            date: currentFieldDetail.date || serverTimestamp(),
-            adminName: currentFieldDetail.adminName || adminName || 'Admin',
-            verifiedAt: isVerified ? serverTimestamp() : null
+          updates = {
+            [`months.${month}`]: false,
+            [`paymentDetails.${month}`]: deleteField(),
+            updatedAt: serverTimestamp(),
           };
-          updates[`paymentDetails.${month}`] = newDetail;
+        } else {
+          updates = {
+            [`months.${month}`]: isVerified,
+            [`paymentDetails.${month}.status`]: newStatus,
+            updatedAt: serverTimestamp(),
+          };
+
+          if (isVerified) {
+            updates[`paymentDetails.${month}.verifiedAt`] = serverTimestamp();
+          } else {
+            updates[`paymentDetails.${month}.verifiedAt`] = null;
+          }
         }
 
         t.update(memberRef, updates);
 
         t.set(activityRef, {
           action: 'update_status_iuran',
-          details: formatLogDetails(`[Iuran] ${type === 'driver' ? 'Driver' : 'Helper'} - ${currentData.name || 'Member'} - ${month}/${new Date().getFullYear()} - ${newStatus === 'verified' ? 'LUNAS / VERIFIED' : newStatus === 'pending' ? 'PENDING' : 'BELUM BAYAR / UNPAID'}`),
+          details: formatLogDetails(`[Iuran] ${type === 'driver' ? 'Driver' : 'Helper'} - ${members.find(m => m.id === memberId)?.name || 'Member'} - ${month}/${new Date().getFullYear()} - ${isUnpaid ? 'BELUM BAYAR / DIHAPUS' : newStatus === 'verified' ? 'LUNAS / VERIFIED' : newStatus === 'pending' ? 'PENDING' : 'GAGAL / REJECTED'}`),
           adminName: adminName || 'Admin',
           timestamp: serverTimestamp()
         });
@@ -755,53 +688,9 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
           });
         }
       }
-    } catch (error: any) {
+    } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
-      setActionError(error?.message || 'Gagal mengubah status pembayaran.');
     }
-  };
-
-  const handleStatusChangeAttempt = async (targetMemberId: string, targetMonth: string, newStatus: 'verified' | 'pending' | 'unpaid') => {
-    const rootAdminName = localStorage.getItem('ADMIN_NICKNAME') || '';
-    
-    // Always prompt for Admin Verification to verify name and PIN
-    setStatusVerifyTarget({
-      memberId: targetMemberId,
-      month: targetMonth,
-      newStatus
-    });
-    setStatusVerifyName(rootAdminName);
-    setStatusVerifyPin('');
-    setStatusVerifyError('');
-    setShowStatusVerify(true);
-  };
-
-  const handleStatusVerifyConfirm = async (overridePin?: string) => {
-    if (!statusVerifyName.trim()) {
-      setStatusVerifyError('Nama admin harus diisi');
-      return;
-    }
-    
-    const pinToVerify = overridePin !== undefined ? overridePin : statusVerifyPin;
-    const isValid = await verifyAdmin(statusVerifyName, pinToVerify);
-    if (!isValid) {
-      setStatusVerifyError('Nama admin atau PIN salah');
-      return;
-    }
-    
-    // Success: Save admin session
-    localStorage.setItem('ADMIN_NICKNAME', statusVerifyName.trim());
-    const isSuper = await isAdminSuper(statusVerifyName);
-    localStorage.setItem('ADMIN_ROLE', isSuper ? 'super-admin' : 'admin');
-    setAdminName(statusVerifyName.trim());
-    
-    if (statusVerifyTarget) {
-      await updatePaymentStatus(statusVerifyTarget.memberId, statusVerifyTarget.month, statusVerifyTarget.newStatus);
-    }
-    
-    setShowStatusVerify(false);
-    setStatusVerifyTarget(null);
-    setStatusVerifyPin('');
   };
 
   const updateMemberDetails = async (id: string) => {
@@ -956,17 +845,17 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
 
       {/* Table section */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="overflow-auto max-h-[600px] relative">
+        <div className="overflow-auto max-h-[650px] relative">
           <table className="w-full text-left grid-table min-w-[1000px] relative border-collapse">
             <thead>
-              <tr className="border-b border-gray-100">
-                <th className="px-3 py-1.5 text-xs font-black text-gray-500 uppercase tracking-widest w-px whitespace-nowrap sticky top-0 left-0 z-30 bg-gray-50 border-r border-gray-100 shadow-[2px_0_5px_rgba(0,0,0,0.015)]">Data Anggota</th>
+              <tr className="border-b border-gray-100 align-middle">
+                <th className="text-left align-middle px-3 py-2.5 text-xs font-black text-gray-500 uppercase tracking-widest min-w-[170px] w-auto whitespace-nowrap sticky top-0 left-0 z-30 bg-gray-50 border-r border-gray-100 shadow-[2px_0_5px_rgba(0,0,0,0.015)]">Data Anggota</th>
                 {MONTHS.map(month => {
                   const isSelected = filterMonth === month;
                   return (
                     <th 
                       key={month} 
-                      className={`px-1 py-1.5 text-center text-xs font-bold uppercase tracking-widest w-auto transition-colors duration-200 sticky top-0 z-20 border-b border-gray-100 ${
+                      className={`px-1 py-3 text-center text-xs font-bold uppercase tracking-widest w-auto transition-colors duration-200 sticky top-0 z-20 border-b border-gray-100 ${
                         isSelected 
                           ? 'text-blue-600 bg-blue-50/95 font-extrabold border-x border-blue-100/50' 
                           : 'text-gray-400 bg-gray-50/95'
@@ -976,8 +865,8 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                     </th>
                   );
                 })}
-                <th className="px-3 py-1.5 text-xs font-bold text-gray-400 uppercase tracking-widest text-center sticky top-0 z-20 bg-gray-50/95 border-b border-gray-100">Status</th>
-                <th className="px-2 py-1.5 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-center sticky top-0 z-20 bg-gray-50/95 border-b border-gray-100">Bayar</th>
+                <th className="px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-widest text-center sticky top-0 z-20 bg-gray-50/95 border-b border-gray-100">Status</th>
+                <th className="px-2 py-2 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-center sticky top-0 z-20 bg-gray-50/95 border-b border-gray-100">Bayar</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -992,29 +881,29 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, scale: 0.95 }}
-                      className="hover:bg-gray-50/30 transition-colors group relative"
+                      className="hover:bg-gray-50/30 transition-colors group relative align-middle"
                     >
-                      <td className="px-3 py-1 align-middle sticky left-0 z-10 bg-white group-hover:bg-gray-50/90 transition-colors border-r border-gray-100 shadow-[2px_0_5px_rgba(0,0,0,0.015)] w-px whitespace-nowrap">
+                      <td className="px-2 py-2.5 sticky left-0 z-10 bg-white group-hover:bg-gray-50/90 transition-colors border-r border-gray-100 shadow-[2px_0_5px_rgba(0,0,0,0.015)] text-left align-middle min-w-[170px] w-auto whitespace-nowrap">
                         <LongPressWrapper
                           onLongPress={() => {
                             setActiveLongPressMember({ id: member.id, name: member.name });
                           }}
-                          className="flex-1"
+                          className="flex items-center w-full justify-start"
                         >
                             {(isPressing, progress) => (
-                              <div className={`flex items-center justify-between gap-4 group/name py-1 px-1.5 rounded-lg transition-all cursor-pointer ${
+                              <div className={`flex items-center justify-between gap-1 group/name p-1 rounded-lg transition-all cursor-pointer w-full ${
                                 isPressing
                                   ? 'bg-blue-50/75 border border-blue-200/50 scale-95 shadow-inner'
                                   : 'hover:bg-gray-50/40 border border-transparent'
                               }`}>
-                                <div className="flex flex-col text-left select-none justify-center relative min-h-[22px] pr-2">
-                                  <span className="font-bold text-gray-900 text-xs leading-none whitespace-nowrap">{member.name}</span>
+                                <div className="flex flex-col text-left select-none justify-center relative">
+                                  <span className="font-bold text-gray-900 text-xs leading-tight whitespace-nowrap">{member.name}</span>
                                   {isPressing ? (
-                                    <span className="text-[9px] text-blue-500 font-extrabold tracking-wider animate-pulse absolute -bottom-3 left-0 whitespace-nowrap bg-white/90 px-1 rounded shadow-sm">
+                                    <span className="text-[10px] text-blue-500 font-extrabold tracking-wider animate-pulse mt-1">
                                       TAHAN... {Math.round(progress)}%
                                     </span>
                                   ) : (
-                                    <span className="text-[8px] text-gray-400 font-medium tracking-wide opacity-0 group-hover/name:opacity-100 transition-opacity absolute -bottom-3.5 left-0 whitespace-nowrap pointer-events-none">
+                                    <span className="text-[9px] text-gray-400 font-medium tracking-wide opacity-0 group-hover/name:opacity-100 transition-all duration-200 absolute top-[100%] left-0 pointer-events-none whitespace-nowrap bg-white/95 backdrop-blur-xs py-0.5 px-1 rounded-md border border-gray-100 shadow-xs z-30">
                                       Tekan lama untuk opsi
                                     </span>
                                   )}
@@ -1059,46 +948,40 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                         </td>
                       {MONTHS.map(month => {
                         const isVerified = member.months?.[month] === true;
-                        // Provide fallback detail for manual/verified records missing detail map in database
-                        const detail = member.paymentDetails?.[month] || (isVerified ? { method: 'Manual', status: 'verified', date: member.updatedAt || member.createdAt || new Date() } : null);
+                        const detail = member.paymentDetails?.[month];
                         const isPending = detail?.status === 'pending';
-                        const isFailed = detail?.status === 'failed';
+                        const hasDetail = !!detail;
                         const isSelectedCol = filterMonth === month;
-                        const isClickable = true;
-                        const statusText = isVerified ? 'Lunas' : isPending ? 'Pending' : isFailed ? 'Batal' : 'Belum Bayar';
                         
                         return (
-                          <td 
-                            key={month} 
-                            onClick={() => {
-                              setActiveDetail({
-                                memberId: member.id,
-                                memberName: member.name,
-                                month,
-                                data: detail || { status: 'unpaid', method: '-', date: null }
-                              });
-                            }}
-                            className={`px-1 py-1 relative group/td transition-colors duration-200 cursor-pointer hover:bg-blue-50/70 ${
-                              isSelectedCol ? 'bg-blue-50/15 border-x border-blue-100/30' : ''
-                            }`}
-                            title={`Rincian Pembayaran Bulan ${month}: ${statusText}`}
-                          >
+                          <td key={month} className={`px-1 py-2 relative group/td transition-colors duration-200 align-middle ${isSelectedCol ? 'bg-blue-50/15 border-x border-blue-100/30' : ''}`}>
                             <div className="flex justify-center relative">
-                              <div 
-                                className={`w-6 h-6 rounded-none flex items-center justify-center border-2 transition-all ${
+                              <button 
+                                onClick={() => {
+                                  if (hasDetail) {
+                                    setActiveDetail({
+                                      memberId: member.id,
+                                      memberName: member.name,
+                                      month,
+                                      data: detail
+                                    });
+                                  }
+                                }}
+                                className={`w-7 h-7 rounded flex items-center justify-center border-2 transition-all ${
                                   isVerified 
-                                    ? 'bg-green-500 border-green-500 text-white shadow-sm hover:scale-110 active:scale-95' 
+                                    ? 'bg-green-500 border-green-500 text-white shadow-sm cursor-pointer hover:scale-110 active:scale-95' 
                                     : isPending 
-                                      ? 'bg-amber-50 border-amber-200 text-amber-500 animate-pulse hover:border-amber-400 hover:scale-110 active:scale-95' 
-                                      : 'bg-gray-50 border-gray-200 text-gray-300 hover:border-gray-300 hover:scale-110 active:scale-95'
+                                      ? 'bg-amber-50 border-amber-200 text-amber-500 animate-pulse cursor-pointer hover:border-amber-400 hover:scale-110 active:scale-95' 
+                                      : 'bg-gray-50 border-gray-100 text-gray-200 cursor-default'
                                 }`}
+                                title={!hasDetail ? `${month}: Belum Bayar` : undefined}
                               >
                                 {isVerified && <Check size={12} strokeWidth={4} />}
                                 {isPending && <Clock size={10} strokeWidth={3} />}
-                              </div>
+                              </button>
 
                               {/* Hover Tooltip/Popup */}
-                              {isClickable && detail && (
+                              {hasDetail && (
                                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover/td:block z-30 w-52 bg-slate-900 text-white p-3 rounded-2xl text-left shadow-xl border border-slate-800 pointer-events-none">
                                   <div className="space-y-1 text-[11px]">
                                     <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 mb-1.5">
@@ -1106,11 +989,9 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                                       <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${
                                         detail.status === 'verified' 
                                           ? 'bg-green-500/20 text-green-400' 
-                                          : detail.status === 'failed'
-                                            ? 'bg-red-500/20 text-red-400'
-                                            : 'bg-amber-500/20 text-amber-400'
+                                          : 'bg-amber-500/20 text-amber-400'
                                       }`}>
-                                        {detail.status === 'verified' ? 'LUNAS' : detail.status === 'failed' ? 'GAGAL' : 'PENDING'}
+                                        {detail.status === 'verified' ? 'LUNAS' : 'PENDING'}
                                       </span>
                                     </div>
                                     <p className="font-bold flex justify-between">
@@ -1141,9 +1022,9 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                           </td>
                         );
                       })}
-                      <td className="px-3 py-1 text-center">
+                      <td className="px-3 py-2 text-center align-middle">
                         <div className="inline-flex flex-col items-center">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                          <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
                             paidCount === MONTHS.length
                               ? 'bg-green-100 text-green-700'
                               : paidCount > 0
@@ -1154,7 +1035,7 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                           </span>
                         </div>
                       </td>
-                      <td className="px-2 py-1 text-center">
+                      <td className="px-2 py-1.5 text-center align-middle">
                         <div className="flex items-center justify-center gap-1.5">
                           <button
                             onClick={() => {
@@ -1170,7 +1051,7 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                               
                               setSelectedMonths(firstUnpaid ? [firstUnpaid] : []);
                             }}
-                            className={`relative group/btn inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-extrabold transition-all duration-300 shadow-xs overflow-hidden ${
+                            className={`relative group/btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all duration-300 shadow-xs overflow-hidden ${
                               hasPending
                                 ? 'bg-amber-500 text-white hover:bg-amber-600 shadow-amber-100'
                                 : paidCount === MONTHS.length
@@ -1319,7 +1200,7 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                       </div>
                       <div className="flex items-center justify-between px-2 text-sm">
                         <span className="text-gray-500 font-medium">{selectedMonths.length} Bulan terpilih</span>
-                        <span className="text-gray-900 font-bold">Rp {(selectedMonths.length * TARIFF_PER_MONTH).toLocaleString('id-ID')}</span>
+                        <span className="text-gray-900 font-bold">Rp {(selectedMonths.length * TARIFF_PER_MONTH).toLocaleString()}</span>
                       </div>
                       <button
                         onClick={() => setShowMethodSelect(true)}
@@ -1341,7 +1222,7 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                       </button>
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-lg">
-                          Total: Rp {(selectedMonths.length * TARIFF_PER_MONTH).toLocaleString('id-ID')}
+                          Total: Rp {(selectedMonths.length * TARIFF_PER_MONTH).toLocaleString()}
                         </span>
                       </div>
                     </div>
@@ -1406,7 +1287,7 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                           <span>{pendingVerification ? '1 Bulan' : `${selectedMonths.length} Bulan`}</span>
                         </div>
                         <div className={`text-lg font-black ${pendingVerification ? 'text-blue-600' : 'text-orange-600'} mb-2`}>
-                          Rp {(pendingVerification ? TARIFF_PER_MONTH : selectedMonths.length * TARIFF_PER_MONTH).toLocaleString('id-ID')}
+                          Rp {(pendingVerification ? TARIFF_PER_MONTH : selectedMonths.length * TARIFF_PER_MONTH).toLocaleString()}
                         </div>
                         <div className={`pt-2 border-t ${pendingVerification ? 'border-blue-100' : 'border-orange-100'}`}>
                           <p className={`text-[10px] font-bold ${pendingVerification ? 'text-blue-400' : 'text-orange-400'} uppercase tracking-widest mb-1`}>Detail:</p>
@@ -1418,41 +1299,40 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
 
                       <div className="space-y-1.5 text-left">
                         <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">Nama Admin</label>
-                        <select
+                        <input
+                          type="text"
                           value={adminName}
                           onChange={(e) => {
                             setAdminName(e.target.value);
                             setAdminError('');
                           }}
-                          className="w-full px-4 py-3 rounded-xl border border-gray-100 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm font-bold bg-white text-gray-800"
-                        >
-                          <option value="">-- Pilih Pengelola --</option>
-                          {adminsList.map((a) => (
-                            <option key={a.id} value={a.name}>
-                              {a.name} {a.email ? `(${a.email})` : ''}
-                            </option>
-                          ))}
-                        </select>
+                          className="w-full px-4 py-3 rounded-xl border border-gray-100 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm font-medium"
+                          placeholder="Masukkan nama Anda"
+                        />
+                        {['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) && (
+                          <motion.div 
+                            initial={{ opacity: 0, y: -5 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="text-[10px] font-extrabold text-[#9a3412] bg-amber-50 border border-amber-100 px-3 py-1 rounded-xl flex items-center gap-1.5"
+                          >
+                            <span>🌟 Super Admin Terdaftar: Bebas PIN!</span>
+                          </motion.div>
+                        )}
                       </div>
 
                       <div className="space-y-1.5 text-left">
                         <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">PIN Admin</label>
                         <input
                           type="password"
-                          inputMode="numeric"
-                          pattern="[0-9]*"
                           maxLength={4}
-                          value={adminPin}
+                          value={['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) ? '1234' : adminPin}
                           onChange={(e) => {
-                            const val = e.target.value.replace(/\D/g, '');
-                            setAdminPin(val);
+                            setAdminPin(e.target.value);
                             setAdminError('');
-                            if (val.length === 4) {
-                              handleAdminVerify(val);
-                            }
                           }}
-                          className="w-full px-4 py-3 rounded-xl border border-gray-100 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm font-medium tracking-[0.5em] text-center"
-                          placeholder="••••"
+                          disabled={['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase())}
+                          className={`w-full px-4 py-3 rounded-xl border border-gray-100 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm font-medium tracking-[0.5em] text-center ${['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) ? 'bg-amber-50/20 text-amber-500 border-dashed border-amber-200 cursor-not-allowed' : ''}`}
+                          placeholder={['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) ? '✓✓✓✓' : '••••'}
                         />
                       </div>
 
@@ -1522,7 +1402,7 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                            <span>{selectedMonths.length} Bulan</span>
                          </div>
                          <div className="text-2xl font-black text-blue-600 mb-2">
-                           Rp {(selectedMonths.length * TARIFF_PER_MONTH).toLocaleString('id-ID')}
+                           Rp {(selectedMonths.length * TARIFF_PER_MONTH).toLocaleString()}
                          </div>
                          <div className="pt-2 border-t border-blue-100">
                            <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-1">Bulan:</p>
@@ -1640,7 +1520,7 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                                <span>{selectedMonths.length} Bulan</span>
                              </div>
                              <div className="text-2xl font-black text-blue-600">
-                               Rp {(selectedMonths.length * TARIFF_PER_MONTH).toLocaleString('id-ID')}
+                               Rp {(selectedMonths.length * TARIFF_PER_MONTH).toLocaleString()}
                              </div>
                              <p className="text-[10px] text-blue-400 font-bold mt-2 uppercase">Bulan: {selectedMonths.join(', ')}</p>
                           </div>
@@ -1741,7 +1621,7 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                                <span>{selectedMonths.length} Bulan</span>
                              </div>
                              <div className="text-2xl font-black text-blue-600">
-                               Rp {(selectedMonths.length * TARIFF_PER_MONTH).toLocaleString('id-ID')}
+                               Rp {(selectedMonths.length * TARIFF_PER_MONTH).toLocaleString()}
                              </div>
                              <p className="text-[10px] text-blue-400 font-bold mt-2 uppercase">Bulan: {selectedMonths.join(', ')}</p>
                           </div>
@@ -1823,54 +1703,40 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                       ? 'bg-green-100 text-green-700' 
                       : activeDetail.data.status === 'failed'
                         ? 'bg-red-100 text-red-700 border border-red-200'
-                        : activeDetail.data.status === 'pending'
-                          ? 'bg-amber-100 text-amber-700'
-                          : 'bg-gray-100 text-gray-600'
+                        : 'bg-amber-100 text-amber-700'
                   }`}>
-                    {activeDetail.data.status === 'verified' 
-                      ? 'LUNAS' 
-                      : activeDetail.data.status === 'failed' 
-                        ? 'GAGAL / REJECTED' 
-                        : activeDetail.data.status === 'pending'
-                          ? 'PENDING VERIFIKASI'
-                          : 'BELUM BAYAR'}
+                    {activeDetail.data.status === 'verified' ? 'LUNAS' : activeDetail.data.status === 'failed' ? 'GAGAL / REJECTED' : 'PENDING VERIFIKASI'}
                   </span>
                 </div>
 
-                {activeDetail.data.status === 'unpaid' ? (
-                  <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100/30 text-xs font-semibold text-blue-800 leading-relaxed text-left">
-                    Anggota ini <strong className="text-blue-900">Belum Bayar</strong> untuk bulan {activeDetail.month}. Silakan klik tombol <strong className="text-blue-900">"Bayar/Verifikasi"</strong> di kolom aksi paling kanan untuk mencatatkan pembayaran baru.
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm py-1 border-b border-gray-50">
+                    <span className="text-gray-400 font-medium">Metode Pembayaran</span>
+                    <span className="text-gray-900 font-bold">{activeDetail.data.method || 'Tunai'}</span>
                   </div>
-                ) : (
-                  <div className="space-y-2">
+                  {activeDetail.data.bank && (
                     <div className="flex justify-between text-sm py-1 border-b border-gray-50">
-                      <span className="text-gray-400 font-medium">Metode Pembayaran</span>
-                      <span className="text-gray-900 font-bold">{activeDetail.data.method || 'Tunai'}</span>
+                      <span className="text-gray-400 font-medium">Bank Transfer</span>
+                      <span className="text-gray-900 font-bold">{activeDetail.data.bank}</span>
                     </div>
-                    {activeDetail.data.bank && (
-                      <div className="flex justify-between text-sm py-1 border-b border-gray-50">
-                        <span className="text-gray-400 font-medium">Bank Transfer</span>
-                        <span className="text-gray-900 font-bold">{activeDetail.data.bank}</span>
-                      </div>
-                    )}
-                    <div className="flex flex-col py-1.5 border-b border-gray-50">
-                      <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-0.5">Waktu Pembayaran</span>
-                      <span className="text-gray-900 font-bold text-sm">{formatDate(activeDetail.data.date)}</span>
-                    </div>
-                    {activeDetail.data.adminName && (
-                      <div className="flex flex-col py-1.5 border-b border-gray-50">
-                        <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-0.5">Diverifikasi Oleh Admin</span>
-                        <span className="text-gray-900 font-bold text-sm">{activeDetail.data.adminName}</span>
-                      </div>
-                    )}
-                    {activeDetail.data.verifiedAt && (
-                      <div className="flex flex-col py-1.5">
-                        <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-0.5">Waktu Verifikasi</span>
-                        <span className="text-gray-900 font-bold text-sm">{formatDate(activeDetail.data.verifiedAt)}</span>
-                      </div>
-                    )}
+                  )}
+                  <div className="flex flex-col py-1.5 border-b border-gray-50">
+                    <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-0.5">Waktu Pembayaran</span>
+                    <span className="text-gray-900 font-bold text-sm">{formatDate(activeDetail.data.date)}</span>
                   </div>
-                )}
+                  {activeDetail.data.adminName && (
+                    <div className="flex flex-col py-1.5 border-b border-gray-50">
+                      <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-0.5">Diverifikasi Oleh Admin</span>
+                      <span className="text-gray-900 font-bold text-sm">{activeDetail.data.adminName}</span>
+                    </div>
+                  )}
+                  {activeDetail.data.verifiedAt && (
+                    <div className="flex flex-col py-1.5">
+                      <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-0.5">Waktu Verifikasi</span>
+                      <span className="text-gray-900 font-bold text-sm">{formatDate(activeDetail.data.verifiedAt)}</span>
+                    </div>
+                  )}
+                </div>
 
                 {activeDetail.data.status === 'verified' && (
                   <div className="pt-1 select-none">
@@ -1900,16 +1766,54 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                   </div>
                 )}
 
-                {['verified', 'pending', 'failed'].includes(activeDetail.data.status) && (
+                {localStorage.getItem('ADMIN_ROLE') !== 'super-admin' ? (
+                  <div className="pt-4 border-t border-gray-100 flex gap-2.5 p-4 bg-red-50 text-red-750 rounded-2xl border border-red-100/60 font-medium font-sans text-left">
+                    <AlertCircle size={16} className="text-red-500 shrink-0 mt-0.5 animate-pulse" />
+                    <p className="text-[11px] leading-relaxed">
+                      Tindakan dibatasi. Hanya <strong>Super Admin</strong> yang diperkenankan untuk mengubah, membatalkan, atau mereset status iuran melalui checkbox ini.
+                    </p>
+                  </div>
+                ) : activeDetail.data.status === 'pending' ? (
                   <div className="pt-4 border-t border-gray-100 space-y-3">
-                    <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider block">Ubah Status Pembayaran</span>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="flex gap-2.5 p-4 bg-amber-50 text-amber-850 rounded-2xl border border-amber-100/60 font-medium font-sans text-left">
+                      <AlertCircle size={16} className="text-amber-500 shrink-0 mt-0.5 animate-pulse" />
+                      <p className="text-[11px] leading-relaxed">
+                        Perubahan status dari <strong>Pending ke Lunas (Ceklis)</strong> tidak bisa dilakukan secara manual di sini. Harap verifikasi transaksi ini secara resmi melalui menu <strong>"Verifikasi Pending"</strong>.
+                      </p>
+                    </div>
+                    
+                    <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider block font-sans">Tindakan Lain</span>
+                    <div className="flex justify-center">
                       <button
-                        onClick={() => handleStatusChangeAttempt(activeDetail.memberId, activeDetail.month, 'verified')}
-                        disabled={activeDetail.data.status === 'verified'}
-                        className={`flex flex-col items-center justify-center py-2.5 px-1 rounded-2xl border text-[11px] font-bold transition-all ${
+                        onClick={() => {
+                          showConfirm(
+                            'Reset Pembayaran ke Belum Bayar',
+                            `Apakah Anda yakin ingin menolak & menghapus rekaman pembayaran ${activeDetail.memberName} bulan ${activeDetail.month}? Status akan dirubah ke Belum Bayar.`,
+                            () => updatePaymentStatus(activeDetail.memberId, activeDetail.month, 'unpaid')
+                          );
+                        }}
+                        className="w-full py-3 bg-red-50 hover:bg-red-100 text-red-600 font-extrabold rounded-2xl transition-[background-color,color] text-xs border border-red-200/50 flex items-center justify-center gap-2 cursor-pointer outline-none"
+                      >
+                        <Trash2 size={14} className="text-red-500" />
+                        Ubah Ke Belum Bayar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="pt-4 border-t border-gray-100 space-y-3">
+                    <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider block font-sans">Ubah Status Pembayaran</span>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <button
+                        onClick={() => {
+                          showConfirm(
+                            'Ubah Status Pembayaran',
+                            `Ubah status pembayaran ${activeDetail.memberName} bulan ${activeDetail.month} menjadi Lunas (Verified)?`,
+                            () => updatePaymentStatus(activeDetail.memberId, activeDetail.month, 'verified')
+                          );
+                        }}
+                        className={`flex flex-col items-center justify-center py-2.5 px-0.5 rounded-2xl border text-[10px] font-extrabold transition-all outline-none ${
                           activeDetail.data.status === 'verified'
-                            ? 'bg-green-500 border-green-500 text-white shadow-lg shadow-green-100 pointer-events-none cursor-default'
+                            ? 'bg-green-500 border-green-500 text-white shadow-lg shadow-green-100'
                             : 'bg-white border-gray-100 text-gray-600 hover:bg-gray-50'
                         }`}
                       >
@@ -1918,28 +1822,30 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                       </button>
                       
                       <button
-                        onClick={() => handleStatusChangeAttempt(activeDetail.memberId, activeDetail.month, 'pending')}
-                        disabled={activeDetail.data.status === 'pending'}
-                        className={`flex flex-col items-center justify-center py-2.5 px-1 rounded-2xl border text-[11px] font-bold transition-all ${
-                          activeDetail.data.status === 'pending'
-                            ? 'bg-amber-500 border-amber-500 text-white shadow-lg shadow-amber-100 font-black pointer-events-none cursor-default'
-                            : 'bg-white border-gray-100 text-gray-600 hover:bg-gray-50 hover:border-amber-200'
-                        }`}
+                        onClick={() => {
+                          showConfirm(
+                            'Ubah Status Pembayaran',
+                            `Ubah status pembayaran ${activeDetail.memberName} bulan ${activeDetail.month} menjadi Pending?`,
+                            () => updatePaymentStatus(activeDetail.memberId, activeDetail.month, 'pending')
+                          );
+                        }}
+                        className="flex flex-col items-center justify-center py-2.5 px-0.5 rounded-2xl border border-gray-150 bg-white text-gray-600 hover:bg-gray-50 text-[10px] font-extrabold transition-all outline-none"
                       >
                         <Clock size={14} className="mb-1" />
                         Pending
                       </button>
 
                       <button
-                        onClick={() => handleStatusChangeAttempt(activeDetail.memberId, activeDetail.month, 'unpaid')}
-                        disabled={activeDetail.data.status === 'unpaid'}
-                        className={`flex flex-col items-center justify-center py-2.5 px-1 rounded-2xl border text-[11px] font-bold transition-all ${
-                          activeDetail.data.status === 'unpaid'
-                            ? 'bg-red-500 border-red-500 text-white shadow-lg shadow-red-100 font-black pointer-events-none cursor-default'
-                            : 'bg-white border-gray-100 text-gray-600 hover:bg-gray-50 hover:border-red-200'
-                        }`}
+                        onClick={() => {
+                          showConfirm(
+                            'Reset Status Pembayaran',
+                            `Apakah Anda yakin ingin menghapus data pembayaran ${activeDetail.memberName} bulan ${activeDetail.month}? Status akan dirubah ke Belum Bayar.`,
+                            () => updatePaymentStatus(activeDetail.memberId, activeDetail.month, 'unpaid')
+                          );
+                        }}
+                        className="flex flex-col items-center justify-center py-2.5 px-0.5 rounded-2xl border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 hover:text-red-500 hover:border-red-200 text-[10px] font-extrabold transition-all outline-none group"
                       >
-                        <X size={14} className="mb-1" />
+                        <Trash2 size={14} className="mb-1 text-gray-400 group-hover:text-red-500" />
                         Belum Bayar
                       </button>
                     </div>
@@ -2168,21 +2074,25 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                   <label className="text-[10px] uppercase font-bold text-gray-400 tracking-wider block ml-1">
                     Nama Admin
                   </label>
-                  <select
+                  <input
+                    type="text"
                     value={adminName}
                     onChange={(e) => {
                       setAdminName(e.target.value);
                       setAdminError('');
                     }}
-                    className="w-full px-4 py-3 rounded-2xl border border-gray-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none transition-all text-sm font-bold bg-white text-gray-800"
-                  >
-                    <option value="">-- Pilih Pengelola --</option>
-                    {adminsList.map((a) => (
-                      <option key={a.id} value={a.name}>
-                        {a.name} {a.email ? `(${a.email})` : ''}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder="Masukkan nama Anda..."
+                    className="w-full px-4 py-3 rounded-2xl border border-gray-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none transition-all text-sm font-bold"
+                  />
+                  {['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) && (
+                    <motion.div 
+                       initial={{ opacity: 0, y: -5 }}
+                       animate={{ opacity: 1, y: 0 }}
+                       className="text-[10px] font-extrabold text-amber-800 bg-amber-50 border border-amber-100 px-3 py-1 rounded-xl flex items-center p-2 mt-1 gap-1.5"
+                    >
+                      <span>🌟 Super Admin Terdaftar: Bebas PIN!</span>
+                    </motion.div>
+                  )}
                 </div>
 
                 <div className="space-y-1.5 text-left">
@@ -2191,25 +2101,20 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
                   </label>
                   <input
                     type="password"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
                     maxLength={4}
-                    value={adminPin}
+                    value={['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) ? '1234' : adminPin}
                     onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '');
-                      setAdminPin(val);
+                      setAdminPin(e.target.value);
                       setAdminError('');
-                      if (val.length === 4) {
-                        handleGlobalAdminVerify(val);
-                      }
                     }}
-                    placeholder="••••"
+                    disabled={['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase())}
+                    placeholder={['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) ? '✓✓✓✓' : '••••'}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         handleGlobalAdminVerify();
                       }
                     }}
-                    className="w-full px-4 py-3 rounded-2xl border border-gray-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none transition-all text-sm font-bold text-center tracking-[0.5em]"
+                    className={`w-full px-4 py-3 rounded-2xl border border-gray-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none transition-all text-sm font-bold text-center tracking-[0.5em] ${['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) ? 'bg-amber-50/20 text-amber-500 border-dashed border-amber-200 cursor-not-allowed' : ''}`}
                   />
                 </div>
 
@@ -2500,224 +2405,58 @@ export default function MemberList({ type }: { type: 'driver' | 'helper' }) {
         )}
       </AnimatePresence>
 
-      {/* Super Admin Status Change Custom Confirmation Modal */}
+      {/* Custom Confirmation Modal */}
       <AnimatePresence>
-        {showStatusConfirm && statusConfirmTarget && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => {
-                setShowStatusConfirm(false);
-                setStatusConfirmTarget(null);
-              }}
-              className="absolute inset-0 bg-black/40 backdrop-blur-sm shadow-xl"
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl p-6 overflow-hidden border border-gray-100/50 z-10"
-            >
-              <div className="flex flex-col space-y-4 text-left">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center">
-                    <Check size={20} className="stroke-[2.5]" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-gray-900">Konfirmasi Ubah Status</h3>
-                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mt-0.5">Otorisasi Super Admin</p>
-                  </div>
-                </div>
-
-                <div className="bg-blue-50/50 border border-blue-100/30 p-4 rounded-2xl text-xs font-semibold text-blue-800 leading-normal">
-                  Apakah Anda yakin ingin mengubah status pembayaran bulan <strong className="text-blue-900">{statusConfirmTarget.month}</strong> menjadi <strong className="text-blue-900 uppercase">{statusConfirmTarget.newStatus === 'verified' ? 'Lunas' : statusConfirmTarget.newStatus === 'pending' ? 'Pending' : 'Belum Bayar'}</strong>?
-                </div>
-
-                <div className="flex gap-2.5 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowStatusConfirm(false);
-                      setStatusConfirmTarget(null);
-                    }}
-                    className="flex-1 py-3 bg-gray-50 hover:bg-gray-100 text-gray-500 font-extrabold rounded-2xl transition-all text-xs active:scale-95 border border-gray-100"
-                  >
-                    Batal
-                  </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const target = statusConfirmTarget;
-                      setShowStatusConfirm(false);
-                      setStatusConfirmTarget(null);
-                      if (target) {
-                        await updatePaymentStatus(target.memberId, target.month, target.newStatus);
-                      }
-                    }}
-                    className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-2xl transition-all text-xs active:scale-95 shadow-lg shadow-blue-105"
-                  >
-                    Ya, Ubah
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Admin Status Verification Modal */}
-      <AnimatePresence>
-        {showStatusVerify && (
+        {confirmState && confirmState.isOpen && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => {
-                setShowStatusVerify(false);
-                setStatusVerifyTarget(null);
-              }}
-              className="absolute inset-0 bg-black/40 backdrop-blur-sm shadow-xl"
+              onClick={() => setConfirmState(null)}
+              className="absolute inset-0 bg-black/50 backdrop-blur-xs"
             />
             <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl p-6 overflow-hidden border border-gray-100/50 z-10"
+              initial={{ scale: 0.95, opacity: 0, y: 15 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 15 }}
+              className="relative w-full max-w-sm bg-white rounded-3xl border border-gray-100 p-6 shadow-2xl overflow-hidden z-[120]"
             >
-              <div className="flex flex-col space-y-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center">
-                    <Lock size={20} className="stroke-[2.5]" />
-                  </div>
-                  <div className="text-left">
-                    <h3 className="text-sm font-bold text-gray-900">Ubah Status Pembayaran</h3>
-                    <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-widest mt-0.5">Otorisasi Admin</p>
-                  </div>
+              <div className="text-center space-y-4">
+                <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-500 flex items-center justify-center mx-auto text-xl">
+                  ⚠️
                 </div>
-
-                <div className="bg-amber-50 border border-amber-100/50 p-4 rounded-2xl text-xs font-semibold text-amber-800 leading-normal text-left">
-                  Anda mencoba mengubah status pembayaran bulan <strong className="text-amber-900">{statusVerifyTarget?.month}</strong> menjadi <strong className="text-amber-900 uppercase">{statusVerifyTarget?.newStatus === 'verified' ? 'Lunas' : statusVerifyTarget?.newStatus === 'pending' ? 'Pending' : 'Belum Bayar'}</strong>. Tindakan ini memerlukan otorisasi <strong className="text-amber-900">Admin</strong>.
+                <div className="space-y-1.5">
+                  <h3 className="text-base font-black text-gray-900 tracking-tight uppercase leading-tight">
+                    {confirmState.title}
+                  </h3>
+                  <p className="text-[11px] font-semibold text-gray-500 font-sans leading-relaxed">
+                    {confirmState.message}
+                  </p>
                 </div>
-
-                <div className="space-y-3">
-                  <div className="space-y-1.5 text-left">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">Nama Admin</label>
-                    <select
-                      value={statusVerifyName}
-                      onChange={(e) => {
-                        setStatusVerifyName(e.target.value);
-                        setStatusVerifyError('');
-                      }}
-                      className="w-full px-4 py-3 rounded-xl border border-gray-100 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all text-xs font-bold bg-white text-gray-800"
-                    >
-                      <option value="">-- Pilih Pengelola --</option>
-                      {adminsList.map((a) => (
-                        <option key={a.id} value={a.name}>
-                          {a.name} {a.email ? `(${a.email})` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="space-y-1.5 text-left">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">PIN Admin</label>
-                    <input
-                      type="password"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      maxLength={4}
-                      value={statusVerifyPin}
-                      onChange={(e) => {
-                        const val = e.target.value.replace(/\D/g, '');
-                        setStatusVerifyPin(val);
-                        setStatusVerifyError('');
-                        if (val.length === 4) {
-                          handleStatusVerifyConfirm(val);
-                        }
-                      }}
-                      className="w-full px-4 py-3 rounded-xl border border-gray-100 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all text-xs font-black tracking-[0.5em] text-center"
-                      placeholder="••••"
-                    />
-                  </div>
-
-                  {statusVerifyError && (
-                    <motion.p 
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      className="text-[10px] font-black text-red-500 mt-1 bg-red-50 p-2 rounded-xl text-center border border-red-100/40"
-                    >
-                      {statusVerifyError}
-                    </motion.p>
-                  )}
-                </div>
-
-                <div className="flex gap-2.5 pt-2">
+                <div className="flex gap-3 pt-2">
                   <button
-                    type="button"
-                    onClick={() => {
-                      setShowStatusVerify(false);
-                      setStatusVerifyTarget(null);
-                    }}
-                    className="flex-1 py-3 bg-gray-50 hover:bg-gray-100 text-gray-500 font-extrabold rounded-2xl transition-all text-xs active:scale-95 border border-gray-100"
+                    onClick={() => setConfirmState(null)}
+                    className="flex-1 py-3 bg-gray-50 hover:bg-gray-100 text-gray-600 font-extrabold rounded-2xl transition-all text-xs border border-gray-150 cursor-pointer"
                   >
                     Batal
                   </button>
                   <button
-                    type="button"
-                    onClick={handleStatusVerifyConfirm}
-                    className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-2xl transition-all text-xs active:scale-95 shadow-lg shadow-blue-100/40"
+                    onClick={async () => {
+                      if (confirmState.onConfirm) {
+                        try {
+                          await confirmState.onConfirm();
+                        } catch (err) {
+                          console.error("Error executing confirmation:", err);
+                        }
+                      }
+                      setConfirmState(null);
+                    }}
+                    className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-2xl transition-all text-xs shadow-lg shadow-blue-100 cursor-pointer"
                   >
-                    Verifikasi
+                    Ya, Lanjutkan
                   </button>
                 </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Action Error Modal */}
-      <AnimatePresence>
-        {actionError && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setActionError(null)}
-              className="absolute inset-0 bg-black/40 backdrop-blur-sm shadow-xl"
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl p-6 overflow-hidden border border-red-100 z-10"
-            >
-              <div className="flex flex-col items-center text-center space-y-4">
-                <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center text-red-600">
-                  <AlertCircle size={24} />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-gray-900">Gagal Memperbarui Ceklis</h3>
-                  <p className="text-xs text-gray-500 mt-2 leading-relaxed font-semibold">
-                    Terjadi kesalahan saat menyimpan perubahan status ceklis ke database. Periksa hak akses Anda atau koneksi internet.
-                  </p>
-                  {actionError !== 'true' && (
-                    <p className="text-[10px] text-red-500 bg-red-50 p-2.5 rounded-xl font-mono mt-3 leading-snug break-all text-left font-bold">
-                      {actionError}
-                    </p>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setActionError(null)}
-                  className="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-extrabold rounded-2xl shadow-md transition-all text-xs active:scale-95"
-                >
-                  Tutup
-                </button>
               </div>
             </motion.div>
           </div>

@@ -11,7 +11,7 @@ import {
   deleteField
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { verifyAdmin, getAdmins, AdminItem } from '../lib/adminService';
+import { verifyAdmin } from '../lib/adminService';
 import { 
   Check, 
   X, 
@@ -102,12 +102,6 @@ const formatDate = (timestamp: any) => {
 
 export default function PendingVerifications() {
   const [members, setMembers] = useState<Member[]>([]);
-  const [adminsList, setAdminsList] = useState<AdminItem[]>([]);
-  
-  useEffect(() => {
-    getAdmins().then(setAdminsList).catch(console.error);
-  }, []);
-
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
@@ -182,7 +176,7 @@ export default function PendingVerifications() {
     return matchesSearch && matchesType && matchesMethod;
   });
 
-  const handleAdminVerify = async (overridePin?: string) => {
+  const handleAdminVerify = async () => {
     if (!verifyingItem || isVerifying) return;
 
     if (!adminName.trim()) {
@@ -190,12 +184,15 @@ export default function PendingVerifications() {
       return;
     }
 
-    const pinToVerify = overridePin !== undefined ? overridePin : adminPin;
     setIsVerifying(true);
     setAdminError('');
 
     try {
-      const isValid = await verifyAdmin(adminName.trim(), pinToVerify);
+      // Check if admin is Super Admin with hardcoded free-pass
+      const isSuperAdmin = ['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase());
+      const effectivePin = isSuperAdmin ? '1234' : adminPin;
+
+      const isValid = await verifyAdmin(adminName.trim(), effectivePin);
       if (!isValid) {
         setAdminError('Nama admin atau PIN salah');
         setIsVerifying(false);
@@ -211,26 +208,24 @@ export default function PendingVerifications() {
       const memberRef = doc(db, 'members', item.memberId);
       const isVerified = actionType === 'verify';
 
-      const updates: any = {
+      const updates: any = isVerified ? {
+        [`months.${item.month}`]: true,
+        [`paymentDetails.${item.month}.status`]: 'verified',
+        [`paymentDetails.${item.month}.adminName`]: adminName.trim(),
+        [`paymentDetails.${item.month}.verifiedAt`]: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      } : {
+        [`months.${item.month}`]: false,
+        [`paymentDetails.${item.month}`]: deleteField(),
         updatedAt: serverTimestamp(),
       };
-
-      if (isVerified) {
-        updates[`months.${item.month}`] = isVerified;
-        updates[`paymentDetails.${item.month}.status`] = 'verified';
-        updates[`paymentDetails.${item.month}.adminName`] = adminName.trim();
-        updates[`paymentDetails.${item.month}.verifiedAt`] = serverTimestamp();
-      } else {
-        updates[`months.${item.month}`] = deleteField();
-        updates[`paymentDetails.${item.month}`] = deleteField();
-      }
 
       const memberPromise = updateDoc(memberRef, updates);
 
       // Log verified/rejected payment to activities collection
       const activityPromise = setDoc(doc(collection(db, 'activities')), {
         action: isVerified ? 'verifikasi_iuran' : 'tolak_iuran',
-        details: `[Iuran] ${item.memberType === 'driver' ? 'Driver' : 'Helper'} - ${item.memberName} - ${item.month}/${new Date().getFullYear()} - ${isVerified ? 'LUNAS / VERIFIED' : 'GAGAL / REJECTED'}`,
+        details: `[Iuran] ${item.memberType === 'driver' ? 'Driver' : 'Helper'} - ${item.memberName} - ${item.month}/${new Date().getFullYear()} - ${isVerified ? 'LUNAS / VERIFIED' : 'DITOLAK / BELUM BAYAR'}`,
         adminName: adminName.trim(),
         timestamp: serverTimestamp()
       });
@@ -553,22 +548,26 @@ export default function PendingVerifications() {
                 {/* Input Admin Name */}
                 <div className="space-y-1.5 text-left">
                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">Nama Admin</label>
-                  <select
+                  <input
+                    type="text"
                     value={adminName}
                     disabled={isVerifying}
                     onChange={(e) => {
                       setAdminName(e.target.value);
                       setAdminError('');
                     }}
-                    className="w-full px-4 py-3 rounded-xl border border-gray-100 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm font-bold bg-white text-gray-800 disabled:opacity-50"
-                  >
-                    <option value="">-- Pilih Pengelola --</option>
-                    {adminsList.map((a) => (
-                      <option key={a.id} value={a.name}>
-                        {a.name} {a.email ? `(${a.email})` : ''}
-                      </option>
-                    ))}
-                  </select>
+                    className="w-full px-4 py-3 rounded-xl border border-gray-100 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm font-medium disabled:opacity-50"
+                    placeholder="Masukkan nama Anda"
+                  />
+                  {['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: -5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="text-[10px] font-extrabold text-[#9a3412] bg-amber-50 border border-amber-100 px-3 py-1 rounded-xl flex items-center gap-1.5"
+                    >
+                      <span>🌟 Super Admin Terdaftar: Bebas PIN!</span>
+                    </motion.div>
+                  )}
                 </div>
 
                 {/* Input Admin PIN */}
@@ -576,21 +575,15 @@ export default function PendingVerifications() {
                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">PIN Admin</label>
                   <input
                     type="password"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
                     maxLength={4}
-                    value={adminPin}
+                    value={['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) ? '1234' : adminPin}
                     onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '');
-                      setAdminPin(val);
+                      setAdminPin(e.target.value);
                       setAdminError('');
-                      if (val.length === 4) {
-                        handleAdminVerify(val);
-                      }
                     }}
-                    disabled={isVerifying}
-                    className="w-full px-4 py-3 rounded-xl border border-gray-100 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm font-medium tracking-[0.5em] text-center disabled:opacity-50"
-                    placeholder="••••"
+                    disabled={isVerifying || ['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase())}
+                    className={`w-full px-4 py-3 rounded-xl border border-gray-100 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm font-medium tracking-[0.5em] text-center disabled:opacity-50 ${['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) ? 'bg-amber-50/20 text-amber-500 border-dashed border-amber-200 cursor-not-allowed' : ''}`}
+                    placeholder={['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) ? '✓✓✓✓' : '••••'}
                   />
                 </div>
 
@@ -620,7 +613,7 @@ export default function PendingVerifications() {
                   </button>
                   <button
                     onClick={handleAdminVerify}
-                    disabled={isVerifying || !adminName.trim() || adminPin.length !== 4}
+                    disabled={isVerifying || !adminName.trim() || (!['MANCUNG', 'MANCUNG_168', 'MANCUNG168'].includes(adminName.trim().toUpperCase()) && adminPin.length !== 4)}
                     className="flex-1 py-3.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-2xl transition-all font-bold text-sm shadow-lg shadow-blue-100 flex items-center justify-center gap-2 active:scale-95 disabled:cursor-not-allowed"
                   >
                     {isVerifying ? (

@@ -1,10 +1,10 @@
 {
-  "projectId": "kas-delta8",
-  "appId": "1:539864861569:web:b3e0e97852975894bdb680",
-  "apiKey": "AIzaSyCl1yL5MEXse_Rca5BX0FfYuxD1HBif1KM",
-  "authDomain": "kas-delta8.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-f32daac7-d214-480a-a95f-e368580e5384",
-  "storageBucket": "kas-delta8.firebasestorage.app",
-  "messagingSenderId": "539864861569",
+  "projectId": "gen-lang-client-0774260930",
+  "appId": "1:564518867457:web:b4a65b34d961e6398ca600",
+  "apiKey": "AIzaSyDB1P5ZyVMSgTUVTS11CJp6sYAmYg3Ync0",
+  "authDomain": "gen-lang-client-0774260930.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-d8955ab3-7062-432b-a870-8d96e24d3a69",
+  "storageBucket": "gen-lang-client-0774260930.firebasestorage.app",
+  "messagingSenderId": "564518867457",
   "measurementId": ""
 }

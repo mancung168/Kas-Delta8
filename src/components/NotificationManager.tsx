@@ -186,7 +186,25 @@ export default function NotificationManager({ user }: NotificationManagerProps) 
               if (messaging) {
                 const token = await getToken(messaging);
                 if (token) {
-                  console.log('FCM Token generated successfully.');
+                  console.log('FCM Token generated successfully:', token);
+                  localStorage.setItem('fcm_token_cache', token);
+                  window.dispatchEvent(new CustomEvent('fcm-token-loaded', { detail: token }));
+
+                  // Register token with the backend
+                  try {
+                    await fetch('/api/fcm/register', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        token: token,
+                        nickname: localStorage.getItem('ADMIN_NICKNAME') || 'Admin',
+                        email: auth.currentUser?.email || '',
+                      })
+                    });
+                    console.log('FCM token synchronized with server.');
+                  } catch (apiErr) {
+                    console.error('Error synchronizing FCM token with backend API:', apiErr);
+                  }
                 }
               } else {
                 console.log('FCM Messaging is not supported or initialized in this environment.');
